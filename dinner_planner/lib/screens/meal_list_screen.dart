@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/meal.dart';
 import 'add_meal_screen.dart';
+import 'meal_detail_screen.dart';
 
 class MealListScreen extends StatefulWidget {
   const MealListScreen({super.key});
@@ -99,7 +100,16 @@ class _MealListScreenState extends State<MealListScreen> {
                               horizontal: 12, vertical: 6),
 
                           child: ListTile(
-
+                            onTap: () {
+                                if (meal.id != null) {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => MealDetailScreen(mealId: meal.id!),
+                                    ),
+                                  );
+                                }
+                              },
                             leading: meal.imageUrl != null
                                 ? ClipRRect(
                                     borderRadius:
