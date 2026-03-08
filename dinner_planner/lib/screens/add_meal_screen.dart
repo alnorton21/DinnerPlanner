@@ -1,154 +1,124 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
-import '../models/meal.dart';
-import '../models/ingredient.dart';
-import '../services/supabase_client.dart';
+import 'package:image_picker/image_picker.dart';
+import '../services/supabase_service.dart';
+import '../utils/image_helper.dart';
 
 class AddMealScreen extends StatefulWidget {
-  final VoidCallback? onMealAdded; // callback to refresh meal list
-
-  AddMealScreen({this.onMealAdded});
+  const AddMealScreen({super.key});
 
   @override
-  _AddMealScreenState createState() => _AddMealScreenState();
+  State<AddMealScreen> createState() => _AddMealScreenState();
 }
 
 class _AddMealScreenState extends State<AddMealScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final _mealNameController = TextEditingController();
-  final _instructionsController = TextEditingController();
 
-  final SupabaseService _service = SupabaseService();
+  final nameController = TextEditingController();
+  final instructionsController = TextEditingController();
 
-  List<IngredientInput> _ingredients = [IngredientInput()];
+  final picker = ImagePicker();
+  File? image;
 
-  // -------------------
-  // Build Ingredient Input Fields
-  // -------------------
-  List<Widget> _buildIngredientFields() {
-    return List.generate(_ingredients.length, (index) {
-      return Row(
-        children: [
-          Expanded(
-            flex: 3,
-            child: TextFormField(
-              controller: _ingredients[index].nameController,
-              decoration: InputDecoration(labelText: 'Ingredient Name'),
-              validator: (val) => val!.isEmpty ? 'Required' : null,
-            ),
-          ),
-          SizedBox(width: 8),
-          Expanded(
-            flex: 2,
-            child: TextFormField(
-              controller: _ingredients[index].quantityController,
-              decoration: InputDecoration(labelText: 'Quantity'),
-              keyboardType: TextInputType.number,
-              validator: (val) => val!.isEmpty ? 'Required' : null,
-            ),
-          ),
-          SizedBox(width: 8),
-          Expanded(
-            flex: 2,
-            child: TextFormField(
-              controller: _ingredients[index].unitController,
-              decoration: InputDecoration(labelText: 'Unit'),
-            ),
-          ),
-          IconButton(
-            icon: Icon(Icons.delete, color: Colors.red),
-            onPressed: () {
-              setState(() {
-                _ingredients.removeAt(index);
-              });
-            },
-          ),
-        ],
-      );
-    });
+  final service = SupabaseService();
+
+  Future<void> pickImage(ImageSource source) async {
+
+    final picked = await picker.pickImage(source: source);
+
+    if (picked != null) {
+      setState(() {
+        image = File(picked.path);
+      });
+    }
   }
 
-  // -------------------
-  // Add Meal Action
-  // -------------------
-  Future<void> _submitMeal() async {
-    if (_formKey.currentState!.validate()) {
-      // build ingredient objects
-      final ingredients = _ingredients.map((i) {
-        return Ingredient(
-          name: i.nameController.text,
-          quantity: double.tryParse(i.quantityController.text) ?? 0,
-          unit: i.unitController.text,
-          calories: 0, // can extend later
-          protein: 0,
-          carbs: 0,
-          fat: 0,
-        );
-      }).toList();
+  Future<void> saveMeal() async {
 
-      final meal = Meal(
-        id: '', // Supabase will generate
-        name: _mealNameController.text,
-        instructions: _instructionsController.text,
-        ingredients: ingredients,
-      );
+    int mealId = await service.addMeal(
+      nameController.text,
+      instructionsController.text,
+    );
 
-      await _service.addMeal(meal);
+    if (image != null) {
 
-      // call callback to refresh meal list
-      if (widget.onMealAdded != null) widget.onMealAdded!();
+      final compressed = await compressImage(image!);
 
-      Navigator.pop(context);
+      final imageUrl =
+          await service.uploadMealImage(compressed, mealId);
+
+      if (imageUrl != null) {
+        await service.updateMealImage(mealId, imageUrl);
+      }
     }
+
+    Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
+
     return Scaffold(
-      appBar: AppBar(title: Text('Add Meal')),
+      appBar: AppBar(title: const Text("Add Meal")),
+
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            children: [
-              TextFormField(
-                controller: _mealNameController,
-                decoration: InputDecoration(labelText: 'Meal Name'),
-                validator: (val) => val!.isEmpty ? 'Required' : null,
-              ),
-              TextFormField(
-                controller: _instructionsController,
-                decoration: InputDecoration(labelText: 'Instructions'),
-              ),
-              SizedBox(height: 16),
-              Text('Ingredients', style: TextStyle(fontWeight: FontWeight.bold)),
-              ..._buildIngredientFields(),
-              SizedBox(height: 8),
-              TextButton.icon(
-                onPressed: () {
-                  setState(() {
-                    _ingredients.add(IngredientInput());
-                  });
-                },
-                icon: Icon(Icons.add),
-                label: Text('Add Ingredient'),
-              ),
-              SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _submitMeal,
-                child: Text('Save Meal'),
-              ),
-            ],
-          ),
+        padding: const EdgeInsets.all(16),
+
+        child: ListView(
+          children: [
+
+            image != null
+                ? Image.file(image!, height: 200)
+                : Container(
+                    height: 200,
+                    color: Colors.grey[300],
+                    child: const Icon(Icons.restaurant, size: 80),
+                  ),
+
+            const SizedBox(height: 10),
+
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+
+                ElevatedButton.icon(
+                  onPressed: () => pickImage(ImageSource.gallery),
+                  icon: const Icon(Icons.photo),
+                  label: const Text("Gallery"),
+                ),
+
+                const SizedBox(width: 10),
+
+                ElevatedButton.icon(
+                  onPressed: () => pickImage(ImageSource.camera),
+                  icon: const Icon(Icons.camera_alt),
+                  label: const Text("Camera"),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 20),
+
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(labelText: "Meal Name"),
+            ),
+
+            const SizedBox(height: 10),
+
+            TextField(
+              controller: instructionsController,
+              decoration: const InputDecoration(labelText: "Instructions"),
+            ),
+
+            const SizedBox(height: 20),
+
+            ElevatedButton(
+              onPressed: saveMeal,
+              child: const Text("Save Meal"),
+            )
+          ],
         ),
       ),
     );
   }
-}
-
-// Helper class for ingredient input fields
-class IngredientInput {
-  final TextEditingController nameController = TextEditingController();
-  final TextEditingController quantityController = TextEditingController();
-  final TextEditingController unitController = TextEditingController();
 }
