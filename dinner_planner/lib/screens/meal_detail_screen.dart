@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../services/supabase_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'add_ingredient_screen.dart';
 
 class MealDetailScreen extends StatefulWidget {
   final int mealId;
@@ -12,7 +13,11 @@ class MealDetailScreen extends StatefulWidget {
 
 class _MealDetailScreenState extends State<MealDetailScreen> {
 
+  final supabase = Supabase.instance.client;
+
   Map<String, dynamic>? meal;
+  List ingredients = [];
+
   bool loading = true;
 
   @override
@@ -22,7 +27,6 @@ class _MealDetailScreenState extends State<MealDetailScreen> {
   }
 
   Future<void> loadMeal() async {
-    final supabase = SupabaseService.client;
 
     final data = await supabase
         .from('meals')
@@ -32,8 +36,53 @@ class _MealDetailScreenState extends State<MealDetailScreen> {
 
     setState(() {
       meal = data;
+      ingredients = data['ingredients'];
       loading = false;
     });
+  }
+
+  Future<void> deleteMeal() async {
+
+    await supabase
+        .from('meals')
+        .delete()
+        .eq('id', widget.mealId);
+
+    Navigator.pop(context);
+  }
+
+  Future<void> deleteIngredient(int ingredientId) async {
+
+    await supabase
+        .from('ingredients')
+        .delete()
+        .eq('id', ingredientId);
+
+    loadMeal();
+  }
+
+  Map<String, double> calculateNutrition(List ingredients) {
+
+    double calories = 0;
+    double protein = 0;
+    double carbs = 0;
+    double fat = 0;
+
+    for (var ingredient in ingredients) {
+
+      calories += (ingredient['calories'] ?? 0).toDouble();
+      protein += (ingredient['protein'] ?? 0).toDouble();
+      carbs += (ingredient['carbs'] ?? 0).toDouble();
+      fat += (ingredient['fat'] ?? 0).toDouble();
+
+    }
+
+    return {
+      "calories": calories,
+      "protein": protein,
+      "carbs": carbs,
+      "fat": fat
+    };
   }
 
   @override
@@ -45,45 +94,247 @@ class _MealDetailScreenState extends State<MealDetailScreen> {
       );
     }
 
-    final ingredients = meal!['ingredients'] as List;
+    final nutrition = calculateNutrition(ingredients);
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(meal!['name']),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
 
-            if (meal!['image_url'] != null)
-              Image.network(meal!['image_url']),
+      floatingActionButton: FloatingActionButton(
+        child: const Icon(Icons.add),
+        onPressed: () async {
 
-            const SizedBox(height: 20),
-
-            const Text(
-              "Ingredients",
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) =>
+                  AddIngredientScreen(mealId: widget.mealId),
             ),
+          );
 
-            const SizedBox(height: 10),
+          loadMeal();
+        },
+      ),
 
-            Expanded(
-              child: ListView.builder(
-                itemCount: ingredients.length,
-                itemBuilder: (context, index) {
-                  final ingredient = ingredients[index];
+      body: CustomScrollView(
 
-                  return ListTile(
-                    title: Text(ingredient['name']),
-                    subtitle: Text(ingredient['amount'] ?? ''),
-                  );
-                },
+        slivers: [
+
+          SliverAppBar(
+            expandedHeight: 260,
+            pinned: true,
+
+            actions: [
+
+              IconButton(
+                icon: const Icon(Icons.delete),
+                onPressed: deleteMeal,
+              )
+
+            ],
+
+            flexibleSpace: FlexibleSpaceBar(
+
+              title: Text(meal!['name']),
+
+              background: meal!['image_url'] != null
+                  ? Image.network(
+                      meal!['image_url'],
+                      fit: BoxFit.cover,
+                    )
+                  : Container(
+                      color: Colors.grey[300],
+                      child: const Icon(
+                        Icons.restaurant,
+                        size: 120,
+                      ),
+                    ),
+            ),
+          ),
+
+          SliverToBoxAdapter(
+
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+
+                children: [
+
+                  const Text(
+                    "Nutrition",
+                    style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+
+                      child: Row(
+                        mainAxisAlignment:
+                            MainAxisAlignment.spaceAround,
+
+                        children: [
+
+                          Column(
+                            children: [
+                              const Text("Calories"),
+                              Text(
+                                nutrition['calories']!
+                                    .toStringAsFixed(0),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+
+                          Column(
+                            children: [
+                              const Text("Protein"),
+                              Text(
+                                "${nutrition['protein']!.toStringAsFixed(1)} g",
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+
+                          Column(
+                            children: [
+                              const Text("Carbs"),
+                              Text(
+                                "${nutrition['carbs']!.toStringAsFixed(1)} g",
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+
+                          Column(
+                            children: [
+                              const Text("Fat"),
+                              Text(
+                                "${nutrition['fat']!.toStringAsFixed(1)} g",
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 25),
+
+                  const Text(
+                    "Ingredients",
+                    style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  ingredients.isEmpty
+                      ? const Text("No ingredients yet")
+
+                      : Column(
+                          children: ingredients.map((ingredient) {
+
+                            return Card(
+
+                              margin:
+                                  const EdgeInsets.only(bottom: 10),
+
+                              child: ListTile(
+
+                                leading:
+                                    const Icon(Icons.kitchen),
+
+                                title: Text(ingredient['name']),
+
+                                subtitle: Text(
+                                  "${ingredient['quantity']} ${ingredient['unit']}",
+                                ),
+
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+
+                                  children: [
+
+                                    IconButton(
+                                      icon:
+                                          const Icon(Icons.edit),
+                                      onPressed: () {
+
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                AddIngredientScreen(
+                                                    mealId:
+                                                        widget.mealId),
+                                          ),
+                                        ).then((_) =>
+                                            loadMeal());
+                                      },
+                                    ),
+
+                                    IconButton(
+                                      icon:
+                                          const Icon(Icons.delete),
+                                      onPressed: () {
+
+                                        deleteIngredient(
+                                            ingredient['id']);
+                                      },
+                                    ),
+
+                                  ],
+                                ),
+                              ),
+                            );
+
+                          }).toList(),
+                        ),
+
+                  const SizedBox(height: 30),
+
+                  const Text(
+                    "Instructions",
+                    style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius:
+                          BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      meal!['instructions'] ??
+                          "No instructions",
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                  ),
+
+                  const SizedBox(height: 40)
+
+                ],
               ),
             ),
-          ],
-        ),
+          )
+        ],
       ),
     );
   }
