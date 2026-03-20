@@ -1,13 +1,23 @@
-import 'package:flutter/material.dart';
-import 'add_meal_screen.dart';
-import 'meal_list_screen.dart'; // we’ll create this next
+import ‘package:flutter/material.dart’;
+import ‘package:supabase_flutter/supabase_flutter.dart’;
+import ‘add_meal_screen.dart’;
+import ‘meal_list_screen.dart’;
 
 class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Dinner Planner'),
+        title: Text(‘Dinner Planner’),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: ‘Sign out’,
+            onPressed: () async {
+              await Supabase.instance.client.auth.signOut();
+            },
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),

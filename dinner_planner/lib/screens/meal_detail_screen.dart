@@ -277,8 +277,8 @@ class _MealDetailScreenState extends State<MealDetailScreen> {
                                           MaterialPageRoute(
                                             builder: (context) =>
                                                 AddIngredientScreen(
-                                                    mealId:
-                                                        widget.mealId),
+                                                    mealId: widget.mealId,
+                                                    ingredient: ingredient),
                                           ),
                                         ).then((_) =>
                                             loadMeal());

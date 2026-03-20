@@ -1,4 +1,3 @@
-import 'ingredient.dart';
 
 class Meal {
   final int? id;

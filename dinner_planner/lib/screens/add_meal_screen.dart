@@ -33,6 +33,10 @@ class _AddMealScreenState extends State<AddMealScreen> {
   List<Map<String, dynamic>> ingredients = [];
   int? editingIndex;
 
+  // Holds a reference to the Autocomplete widget's internal controller
+  // so we can clear it after adding an ingredient.
+  TextEditingController? _autocompleteController;
+
   final ImagePicker picker = ImagePicker();
 
   // Base nutrition per 100g
@@ -211,6 +215,7 @@ class _AddMealScreenState extends State<AddMealScreen> {
       }
 
       ingredientNameController.clear();
+      _autocompleteController?.clear();
       quantityController.clear();
       unitController.clear();
       caloriesController.clear();
@@ -225,10 +230,13 @@ class _AddMealScreenState extends State<AddMealScreen> {
 
     await uploadImage();
 
+    final userId = supabase.auth.currentUser!.id;
+
     final mealResponse = await supabase.from('meals').insert({
       "name": mealNameController.text.trim(),
       "instructions": instructionsController.text.trim(),
       "image_url": imageUrl,
+      "user_id": userId,
     }).select().single();
 
     final mealId = mealResponse['id'];
@@ -287,9 +295,11 @@ class _AddMealScreenState extends State<AddMealScreen> {
             },
             onSelected: selectFood,
             fieldViewBuilder: (context, controller, focusNode, onEditingComplete) {
+              _autocompleteController = controller;
               return TextField(
-                controller: ingredientNameController,
+                controller: controller,
                 focusNode: focusNode,
+                onChanged: (value) => ingredientNameController.text = value,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
                   hintText: "Search Ingredient",
