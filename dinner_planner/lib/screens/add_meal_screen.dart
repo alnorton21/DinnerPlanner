@@ -37,6 +37,12 @@ class _AddMealScreenState extends State<AddMealScreen> {
   // so we can clear it after adding an ingredient.
   TextEditingController? _autocompleteController;
 
+  // My Ingredients source
+  bool _showUserIngredients = false;
+  bool _userIngredientsLoaded = false;
+  List<Map<String, dynamic>> _userIngredients = [];
+  final _myIngredientFilterController = TextEditingController();
+
   final ImagePicker picker = ImagePicker();
 
   // Base nutrition per 100g
@@ -76,7 +82,48 @@ class _AddMealScreenState extends State<AddMealScreen> {
     proteinController.dispose();
     carbsController.dispose();
     fatController.dispose();
+    _myIngredientFilterController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadUserIngredients() async {
+    final mealsResponse = await supabase.from('meals').select('id');
+    final mealIds = (mealsResponse as List).map((m) => m['id']).toList();
+    if (mealIds.isEmpty) {
+      setState(() => _userIngredientsLoaded = true);
+      return;
+    }
+    final response = await supabase
+        .from('ingredients')
+        .select('name, unit, calories, protein, carbs, fat')
+        .inFilter('meal_id', mealIds);
+    final seen = <String>{};
+    final deduped = <Map<String, dynamic>>[];
+    for (final row in response as List) {
+      final name = (row['name'] as String).toLowerCase();
+      if (seen.add(name)) deduped.add(Map<String, dynamic>.from(row));
+    }
+    deduped.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+    setState(() {
+      _userIngredients = deduped;
+      _userIngredientsLoaded = true;
+    });
+  }
+
+  void _selectUserIngredient(Map<String, dynamic> ing) {
+    setState(() {
+      ingredientNameController.text = ing['name'];
+      _autocompleteController?.text = ing['name'];
+      quantityController.text = '100';
+      unitController.text = ing['unit'] ?? 'g';
+      baseNutrition = {
+        'calories': (ing['calories'] as num?)?.toDouble() ?? 0,
+        'protein': (ing['protein'] as num?)?.toDouble() ?? 0,
+        'carbs': (ing['carbs'] as num?)?.toDouble() ?? 0,
+        'fat': (ing['fat'] as num?)?.toDouble() ?? 0,
+      };
+      scaleNutrition();
+    });
   }
 
   Future<void> pickImage() async {
@@ -271,7 +318,14 @@ class _AddMealScreenState extends State<AddMealScreen> {
           const SizedBox(height: 10),
           TextField(
             controller: instructionsController,
-            decoration: const InputDecoration(labelText: "Instructions"),
+            decoration: const InputDecoration(
+              labelText: "Instructions",
+              alignLabelWithHint: true,
+              border: OutlineInputBorder(),
+            ),
+            maxLines: null,
+            minLines: 4,
+            keyboardType: TextInputType.multiline,
           ),
           const SizedBox(height: 10),
           Row(children: [
@@ -287,26 +341,93 @@ class _AddMealScreenState extends State<AddMealScreen> {
           const Divider(height: 30),
           const Text("Add Ingredients", style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
-          Autocomplete<Map<String, dynamic>>(
-            displayStringForOption: (option) => option["name"],
-            optionsBuilder: (textEditingValue) async {
-              if (textEditingValue.text.isEmpty) return const Iterable.empty();
-              return await searchFoods(textEditingValue.text);
-            },
-            onSelected: selectFood,
-            fieldViewBuilder: (context, controller, focusNode, onEditingComplete) {
-              _autocompleteController = controller;
-              return TextField(
-                controller: controller,
-                focusNode: focusNode,
-                onChanged: (value) => ingredientNameController.text = value,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  hintText: "Search Ingredient",
+          // Source toggle
+          Row(
+            children: [
+              Expanded(
+                child: ChoiceChip(
+                  label: const Text('Food Database'),
+                  selected: !_showUserIngredients,
+                  onSelected: (_) => setState(() => _showUserIngredients = false),
                 ),
-              );
-            },
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ChoiceChip(
+                  label: const Text('My Ingredients'),
+                  selected: _showUserIngredients,
+                  onSelected: (_) {
+                    setState(() => _showUserIngredients = true);
+                    if (!_userIngredientsLoaded) _loadUserIngredients();
+                  },
+                ),
+              ),
+            ],
           ),
+          const SizedBox(height: 10),
+          if (!_showUserIngredients) ...[
+            Autocomplete<Map<String, dynamic>>(
+              displayStringForOption: (option) => option["name"],
+              optionsBuilder: (textEditingValue) async {
+                if (textEditingValue.text.isEmpty) return const Iterable.empty();
+                return await searchFoods(textEditingValue.text);
+              },
+              onSelected: selectFood,
+              fieldViewBuilder: (context, controller, focusNode, onEditingComplete) {
+                _autocompleteController = controller;
+                return TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  onChanged: (value) => ingredientNameController.text = value,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText: "Search ingredient (e.g. chicken, rice...)",
+                  ),
+                );
+              },
+            ),
+          ] else ...[
+            TextField(
+              controller: _myIngredientFilterController,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: "Filter my ingredients...",
+                prefixIcon: Icon(Icons.search),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 6),
+            if (!_userIngredientsLoaded)
+              const Center(child: CircularProgressIndicator())
+            else if (_userIngredients.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text('No saved ingredients yet. Add meals with ingredients first.'),
+              )
+            else
+              Container(
+                constraints: const BoxConstraints(maxHeight: 200),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: ListView(
+                  shrinkWrap: true,
+                  children: _userIngredients
+                      .where((ing) => _myIngredientFilterController.text.isEmpty ||
+                          (ing['name'] as String)
+                              .toLowerCase()
+                              .contains(_myIngredientFilterController.text.toLowerCase()))
+                      .map((ing) => ListTile(
+                            dense: true,
+                            title: Text(ing['name']),
+                            subtitle: Text('${ing['unit']} · ${(ing['calories'] as num?)?.toStringAsFixed(0) ?? 0} kcal/serving'),
+                            onTap: () => _selectUserIngredient(ing),
+                          ))
+                      .toList(),
+                ),
+              ),
+          ],
           const SizedBox(height: 10),
           Row(children: [
             Expanded(
@@ -394,6 +515,7 @@ class _AddMealScreenState extends State<AddMealScreen> {
                       onPressed: () {
                         setState(() {
                           ingredientNameController.text = ing["name"];
+                          _autocompleteController?.text = ing["name"];
                           quantityController.text = ing["quantity"];
                           unitController.text = ing["unit"];
                           caloriesController.text = ing["calories"].toString();
@@ -409,7 +531,6 @@ class _AddMealScreenState extends State<AddMealScreen> {
                           };
 
                           editingIndex = index;
-                          scaleNutrition();
                         });
                       },
                     ),
