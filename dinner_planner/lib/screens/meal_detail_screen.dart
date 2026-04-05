@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'edit_meal_screen.dart';
 
 class MealDetailScreen extends StatefulWidget {
@@ -190,6 +191,22 @@ class _MealDetailScreenState extends State<MealDetailScreen> {
                       style: const TextStyle(fontSize: 16),
                     ),
                   ),
+                  if (meal!['source_url'] != null &&
+                      (meal!['source_url'] as String).isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.open_in_new, size: 16),
+                      label: const Text('View original recipe'),
+                      onPressed: () async {
+                        final uri =
+                            Uri.tryParse(meal!['source_url'] as String);
+                        if (uri != null) {
+                          await launchUrl(uri,
+                              mode: LaunchMode.externalApplication);
+                        }
+                      },
+                    ),
+                  ],
                   const SizedBox(height: 40),
                 ],
               ),

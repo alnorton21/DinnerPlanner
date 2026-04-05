@@ -5,21 +5,62 @@ import 'meal_list_screen.dart';
 import 'meal_planner_screen.dart';
 import 'profile_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  String _displayName = '';
+  bool _loadingName = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDisplayName();
+  }
+
+  Future<void> _loadDisplayName() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) {
+      setState(() => _loadingName = false);
+      return;
+    }
+    final data = await Supabase.instance.client
+        .from('user_profiles')
+        .select('display_name')
+        .eq('user_id', userId)
+        .maybeSingle();
+    if (mounted) {
+      setState(() {
+        _displayName = (data?['display_name'] as String? ?? '').trim();
+        _loadingName = false;
+      });
+    }
+  }
+
+  String _greeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'Good morning!';
+    if (hour < 17) return 'Good afternoon!';
+    return 'Good evening!';
+  }
 
   @override
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser;
     final email = user?.email ?? '';
     final greeting = _greeting();
+    final displayLabel = _displayName.isNotEmpty ? _displayName : email;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       body: SafeArea(
         child: Column(
           children: [
-            _buildHeader(context, greeting, email),
+            _buildHeader(context, greeting, displayLabel),
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
@@ -77,10 +118,14 @@ class HomeScreen extends StatelessWidget {
                       iconBg: const Color(0xFF0288D1),
                       title: 'Profile & Goals',
                       subtitle: 'Set your daily nutrition targets',
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const ProfileScreen()),
-                      ),
+                      onTap: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                        );
+                        // Reload display name in case user updated it
+                        _loadDisplayName();
+                      },
                     ),
                   ],
                 ),
@@ -92,7 +137,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(BuildContext context, String greeting, String email) {
+  Widget _buildHeader(BuildContext context, String greeting, String displayLabel) {
     return Container(
       width: double.infinity,
       decoration: const BoxDecoration(
@@ -132,8 +177,17 @@ class HomeScreen extends StatelessWidget {
                     letterSpacing: 0.5,
                   ),
                 ),
-                if (email.isNotEmpty) ...[
-                  const SizedBox(height: 6),
+                const SizedBox(height: 6),
+                if (_loadingName)
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white70,
+                    ),
+                  )
+                else if (displayLabel.isNotEmpty)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
@@ -141,7 +195,7 @@ class HomeScreen extends StatelessWidget {
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      email,
+                      displayLabel,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 12,
@@ -149,7 +203,6 @@ class HomeScreen extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                ],
               ],
             ),
           ),
@@ -169,13 +222,6 @@ class HomeScreen extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  String _greeting() {
-    final hour = DateTime.now().hour;
-    if (hour < 12) return 'Good morning!';
-    if (hour < 17) return 'Good afternoon!';
-    return 'Good evening!';
   }
 }
 

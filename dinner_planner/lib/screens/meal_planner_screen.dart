@@ -18,6 +18,7 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
   List<MealPlan> _plans = [];
   List<Meal> _allMeals = [];
   bool _loading = true;
+  bool _summaryExpanded = true;
 
   double _calTarget = 2000;
   double _proTarget = 150;
@@ -206,6 +207,165 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
     await _loadWeek();
   }
 
+  /// Returns per-day calories (index 0–6) and weekly averages.
+  Map<String, dynamic> _getWeekNutritionSummary() {
+    final dayCals = List<double>.generate(7, (i) => _getDayNutrition(i)['calories']!);
+    double totalCal = 0, totalPro = 0, totalCarb = 0, totalFat = 0;
+    int daysWithData = 0;
+    for (int i = 0; i < 7; i++) {
+      final n = _getDayNutrition(i);
+      if (n['calories']! > 0) {
+        totalCal += n['calories']!;
+        totalPro += n['protein']!;
+        totalCarb += n['carbs']!;
+        totalFat += n['fat']!;
+        daysWithData++;
+      }
+    }
+    final d = daysWithData > 0 ? daysWithData.toDouble() : 1;
+    return {
+      'dayCals': dayCals,
+      'avgCal': totalCal / d,
+      'avgPro': totalPro / d,
+      'avgCarb': totalCarb / d,
+      'avgFat': totalFat / d,
+      'daysWithData': daysWithData,
+    };
+  }
+
+  Widget _buildWeeklySummary() {
+    final summary = _getWeekNutritionSummary();
+    final dayCals = summary['dayCals'] as List<double>;
+    final daysWithData = summary['daysWithData'] as int;
+    const dayAbbr = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    const barMaxHeight = 56.0;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: Column(
+        children: [
+          // Header row — tappable to collapse
+          InkWell(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
+            onTap: () => setState(() => _summaryExpanded = !_summaryExpanded),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+              child: Row(
+                children: [
+                  const Text('Weekly Summary',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  const Spacer(),
+                  if (daysWithData > 0)
+                    Text(
+                      '${summary['avgCal'].toStringAsFixed(0)} cal/day avg',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    _summaryExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.grey[600],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Collapsible body
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeInOut,
+            child: _summaryExpanded
+                ? Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+                    child: Column(
+                      children: [
+                        const Divider(height: 1),
+                        const SizedBox(height: 12),
+                        // Daily calorie bars
+                        if (daysWithData == 0)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Text(
+                              'Add meals to see your weekly summary',
+                              style: TextStyle(color: Colors.grey[500], fontSize: 13),
+                            ),
+                          )
+                        else ...[
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: List.generate(7, (i) {
+                              final cal = dayCals[i];
+                              final ratio = (cal / _calTarget).clamp(0.0, 1.5);
+                              final barH = ratio * barMaxHeight;
+                              final color = cal <= _calTarget
+                                  ? Colors.green
+                                  : cal <= _calTarget * 1.2
+                                      ? Colors.orange
+                                      : Colors.red;
+                              return Expanded(
+                                child: Column(
+                                  children: [
+                                    // Target line spacer so all bars align at bottom
+                                    SizedBox(height: barMaxHeight - barH.clamp(0, barMaxHeight)),
+                                    Container(
+                                      height: barH.clamp(2.0, barMaxHeight * 1.5),
+                                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                                      decoration: BoxDecoration(
+                                        color: cal > 0 ? color : Colors.grey[200],
+                                        borderRadius: BorderRadius.circular(3),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      dayAbbr[i],
+                                      style: TextStyle(
+                                          fontSize: 11, color: Colors.grey[600]),
+                                    ),
+                                    if (cal > 0)
+                                      Text(
+                                        cal.toStringAsFixed(0),
+                                        style: const TextStyle(fontSize: 9),
+                                      ),
+                                  ],
+                                ),
+                              );
+                            }),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4, bottom: 10),
+                            child: Text(
+                              'Target: ${_calTarget.toStringAsFixed(0)} cal/day',
+                              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                          const Divider(height: 1),
+                          const SizedBox(height: 10),
+                          // Weekly macro averages
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Weekly avg:',
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                              Text('${summary['avgPro'].toStringAsFixed(1)} g protein',
+                                  style: const TextStyle(fontSize: 12, color: Colors.blue)),
+                              Text('${summary['avgCarb'].toStringAsFixed(1)} g carbs',
+                                  style: const TextStyle(fontSize: 12, color: Colors.green)),
+                              Text('${summary['avgFat'].toStringAsFixed(1)} g fat',
+                                  style: const TextStyle(fontSize: 12, color: Colors.redAccent)),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -245,6 +405,7 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
               padding: const EdgeInsets.all(12),
               child: Column(
                 children: [
+                  _buildWeeklySummary(),
                   for (int dayIndex = 0; dayIndex < 7; dayIndex++)
                     _buildDaySection(dayIndex),
                 ],

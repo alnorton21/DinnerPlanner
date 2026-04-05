@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/home_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/update_password_screen.dart';
 
 Future<void> main() async {
+  await dotenv.load(fileName: '.env');
   await Supabase.initialize(
-    url: 'https://azsipkilmtmssiqiqntr.supabase.co',
-    anonKey: 'sb_publishable_oZXFqwIxPdhSB6YN_O3IKw_q4D84wYx',
+    url: dotenv.env['SUPABASE_URL']!,
+    anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
     authOptions: const FlutterAuthClientOptions(
       authFlowType: AuthFlowType.pkce,
     ),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -5,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/meal_plan.dart';
 import '../models/shopping_item.dart';
 import '../models/store_info.dart';
+import '../services/supabase_service.dart';
 import 'store_preferences_screen.dart';
 import 'store_list_screen.dart';
 
@@ -30,6 +32,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
 
   bool _loading = true;
   List<ShoppingItem> _items = [];
+  List<ShoppingItem> _customItems = [];
 
   // User's selected stores
   List<String> _selectedStores = [];
@@ -40,14 +43,31 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
   // Per-item price:  itemKey → price (user-entered)
   final Map<String, double?> _prices = {};
 
+  // Checked-off items (keys of items the user has ticked while shopping)
+  final Set<String> _checkedItems = {};
+
+  Timer? _saveTimer;
+
+  final _service = SupabaseService();
+
+  String get _weekStartStr =>
+      widget.weekStart.toIso8601String().substring(0, 10);
+
   @override
   void initState() {
     super.initState();
     _init();
   }
 
+  @override
+  void dispose() {
+    _saveTimer?.cancel();
+    super.dispose();
+  }
+
   Future<void> _init() async {
     await Future.wait([_buildShoppingList(), _loadStorePreferences()]);
+    await _loadPersistedState();
     setState(() => _loading = false);
   }
 
@@ -117,6 +137,58 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
     }
   }
 
+  Future<void> _loadPersistedState() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+    final row = await _service.loadShoppingState(userId, _weekStartStr);
+    if (row == null) return;
+
+    // Restore assignments
+    final rawAssignments = row['assignments'] as Map<String, dynamic>? ?? {};
+    for (final e in rawAssignments.entries) {
+      _assignments[e.key] = e.value as String;
+    }
+
+    // Restore prices
+    final rawPrices = row['prices'] as Map<String, dynamic>? ?? {};
+    for (final e in rawPrices.entries) {
+      _prices[e.key] = (e.value as num?)?.toDouble();
+    }
+
+    // Restore custom items and append to _items
+    final rawCustom = row['custom_items'] as List? ?? [];
+    _customItems = rawCustom
+        .map((e) => ShoppingItem.fromCustomJson(e as Map<String, dynamic>))
+        .toList();
+    _items = [..._items, ..._customItems];
+
+    // Restore checked items
+    final rawChecked = row['checked_items'] as List? ?? [];
+    _checkedItems.addAll(rawChecked.map((e) => e as String));
+  }
+
+  void _scheduleSave() {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(seconds: 1), _persistState);
+  }
+
+  Future<void> _persistState() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+    try {
+      await _service.saveShoppingState(
+        userId,
+        _weekStartStr,
+        Map<String, dynamic>.from(_assignments),
+        Map<String, dynamic>.from(_prices.map((k, v) => MapEntry(k, v))),
+        _customItems.map((i) => i.toCustomJson()).toList(),
+        _checkedItems.toList(),
+      );
+    } catch (_) {
+      // Save errors are non-blocking
+    }
+  }
+
   Future<void> _openStorePreferences() async {
     final result = await Navigator.push<List<String>>(
       context,
@@ -139,16 +211,33 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
     }
   }
 
+  void _toggleChecked(ShoppingItem item) {
+    final key = _itemKey(item);
+    setState(() {
+      if (_checkedItems.contains(key)) {
+        _checkedItems.remove(key);
+      } else {
+        _checkedItems.add(key);
+      }
+    });
+    _scheduleSave();
+  }
+
+  void _clearChecked() {
+    setState(() => _checkedItems.clear());
+    _scheduleSave();
+  }
+
   void _assignStore(ShoppingItem item, String storeName) {
     final key = _itemKey(item);
     setState(() {
       if (_assignments[key] == storeName) {
-        // Tap same store again → unassign
         _assignments.remove(key);
       } else {
         _assignments[key] = storeName;
       }
     });
+    _scheduleSave();
   }
 
   void _editPrice(ShoppingItem item) {
@@ -174,6 +263,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
           TextButton(
             onPressed: () {
               setState(() => _prices.remove(key));
+              _scheduleSave();
               Navigator.pop(ctx);
             },
             child: const Text('Clear'),
@@ -182,10 +272,9 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
             onPressed: () {
               final val = double.tryParse(controller.text.trim());
               setState(() {
-                if (val != null) {
-                  _prices[key] = val;
-                }
+                if (val != null) _prices[key] = val;
               });
+              _scheduleSave();
               Navigator.pop(ctx);
             },
             child: const Text('Save'),
@@ -193,6 +282,145 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
         ],
       ),
     );
+  }
+
+  void _editQuantity(ShoppingItem item) {
+    final qty = item.totalQuantity % 1 == 0
+        ? item.totalQuantity.toInt().toString()
+        : item.totalQuantity.toStringAsFixed(1);
+    final controller = TextEditingController(text: qty);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Quantity for ${item.name}'),
+        content: TextField(
+          controller: controller,
+          decoration: InputDecoration(
+            labelText: 'Quantity (${item.unit})',
+            border: const OutlineInputBorder(),
+          ),
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final val = double.tryParse(controller.text.trim());
+              if (val != null && val > 0) {
+                setState(() => item.totalQuantity = val);
+                _scheduleSave();
+              }
+              Navigator.pop(ctx);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAddItemDialog() {
+    final nameController = TextEditingController();
+    final qtyController = TextEditingController();
+    final unitController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add item'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Item name',
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+              textCapitalization: TextCapitalization.sentences,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: TextField(
+                    controller: qtyController,
+                    decoration: const InputDecoration(
+                      labelText: 'Qty',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: unitController,
+                    decoration: const InputDecoration(
+                      labelText: 'Unit (e.g. cups)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final name = nameController.text.trim();
+              final qty = double.tryParse(qtyController.text.trim()) ?? 1.0;
+              final unit = unitController.text.trim();
+              if (name.isNotEmpty) {
+                final newItem = ShoppingItem(
+                  name: name,
+                  totalQuantity: qty,
+                  unit: unit,
+                  totalCalories: 0,
+                  totalProtein: 0,
+                  totalCarbs: 0,
+                  totalFat: 0,
+                  isCustom: true,
+                );
+                setState(() {
+                  _items.add(newItem);
+                  _customItems.add(newItem);
+                });
+                _scheduleSave();
+              }
+              Navigator.pop(ctx);
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _deleteItem(ShoppingItem item) {
+    final key = _itemKey(item);
+    setState(() {
+      _items.remove(item);
+      if (item.isCustom) _customItems.remove(item);
+      _assignments.remove(key);
+      _prices.remove(key);
+      _checkedItems.remove(key);
+    });
+    _scheduleSave();
   }
 
   void _copyList() {
@@ -229,6 +457,14 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
       appBar: AppBar(
         title: Text('Week of $weekLabel'),
         actions: [
+          if (_checkedItems.isNotEmpty)
+            TextButton(
+              onPressed: _clearChecked,
+              child: Text(
+                'Clear checked (${_checkedItems.length})',
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.store_rounded),
             tooltip: 'My stores',
@@ -267,10 +503,6 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
   }
 
   Widget _buildBody() {
-    if (_items.isEmpty) {
-      return const Center(child: Text('No meals planned this week.'));
-    }
-
     return Column(
       children: [
         // ── Store preference banner (shown when no stores selected) ─────────
@@ -287,15 +519,59 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
 
         const Divider(height: 1),
 
+        // ── Add item button ──────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+          child: Row(
+            children: [
+              TextButton.icon(
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add item'),
+                onPressed: _showAddItemDialog,
+              ),
+              if (_items.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(left: 8),
+                  child: Text(
+                    'No meals planned — add items manually',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+            ],
+          ),
+        ),
+
+        const Divider(height: 1),
+
         // ── Ingredient list ─────────────────────────────────────────────────
         Expanded(
-          child: ListView.separated(
-            padding: const EdgeInsets.only(bottom: 100),
-            itemCount: _items.length,
-            separatorBuilder: (_, __) =>
-                const Divider(height: 1, indent: 16, endIndent: 16),
-            itemBuilder: (_, i) => _buildItemTile(_items[i]),
-          ),
+          child: _items.isEmpty
+              ? const Center(child: Text('No items yet. Tap "Add item" above.'))
+              : Builder(builder: (_) {
+                  // Checked items sort to the bottom
+                  final sorted = [
+                    ..._items.where((i) => !_checkedItems.contains(_itemKey(i))),
+                    ..._items.where((i) => _checkedItems.contains(_itemKey(i))),
+                  ];
+                  return ListView.separated(
+                    padding: const EdgeInsets.only(bottom: 100),
+                    itemCount: sorted.length,
+                    separatorBuilder: (_, __) =>
+                        const Divider(height: 1, indent: 16, endIndent: 16),
+                    itemBuilder: (_, i) => Dismissible(
+                      key: Key(_itemKey(sorted[i])),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        color: Colors.red.shade400,
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 20),
+                        child: const Icon(Icons.delete, color: Colors.white),
+                      ),
+                      onDismissed: (_) => _deleteItem(sorted[i]),
+                      child: _buildItemTile(sorted[i]),
+                    ),
+                  );
+                }),
         ),
       ],
     );
@@ -344,6 +620,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
 
   Widget _buildItemTile(ShoppingItem item) {
     final key = _itemKey(item);
+    final isChecked = _checkedItems.contains(key);
     final assignedStore = _assignments[key];
     final price = _prices[key];
     final qty = item.totalQuantity % 1 == 0
@@ -352,7 +629,11 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
     final displayName =
         item.name[0].toUpperCase() + item.name.substring(1);
 
-    return Padding(
+    return Opacity(
+      opacity: isChecked ? 0.45 : 1.0,
+      child: InkWell(
+        onTap: () => _toggleChecked(item),
+        child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -361,10 +642,21 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 3),
-                child: Icon(Icons.shopping_basket_outlined,
-                    size: 20, color: Colors.grey),
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Icon(
+                  isChecked
+                      ? Icons.check_circle
+                      : item.isCustom
+                          ? Icons.edit_note_rounded
+                          : Icons.shopping_basket_outlined,
+                  size: 20,
+                  color: isChecked
+                      ? Colors.green
+                      : item.isCustom
+                          ? Colors.blue.shade300
+                          : Colors.grey,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -372,11 +664,25 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(displayName,
-                        style: const TextStyle(
-                            fontSize: 15, fontWeight: FontWeight.w500)),
-                    Text('$qty ${item.unit}',
                         style: TextStyle(
-                            fontSize: 13, color: Colors.grey[600])),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                            decoration: isChecked
+                                ? TextDecoration.lineThrough
+                                : null)),
+                    GestureDetector(
+                      onTap: () => _editQuantity(item),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('$qty ${item.unit}',
+                              style: TextStyle(
+                                  fontSize: 13, color: Colors.grey[600])),
+                          const SizedBox(width: 4),
+                          Icon(Icons.edit, size: 11, color: Colors.grey[400]),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -401,9 +707,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        price != null
-                            ? Icons.attach_money
-                            : Icons.add,
+                        price != null ? Icons.attach_money : Icons.add,
                         size: 14,
                         color: price != null
                             ? Colors.green.shade700
@@ -438,21 +742,31 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                 children: [
                   for (final storeName in _selectedStores)
                     _buildStoreChip(item, storeName, assignedStore),
-                  // "Find online" chip
+                  // "Find online" chip — uses assigned store if set
                   ActionChip(
                     avatar: const Icon(Icons.open_in_new, size: 14),
-                    label: const Text('Find online'),
+                    label: Text(assignedStore != null
+                        ? 'Find at $assignedStore'
+                        : 'Find online'),
                     labelStyle: const TextStyle(fontSize: 11),
                     padding: EdgeInsets.zero,
                     visualDensity: VisualDensity.compact,
-                    onPressed: () => _launch(Uri.parse(
-                        'https://www.google.com/search?q=${Uri.encodeComponent("${item.name} grocery price")}&tbm=shop')),
+                    onPressed: () {
+                      final store = assignedStore != null
+                          ? storeByName(assignedStore)
+                          : null;
+                      final url = store?.searchUrl(item.name) ??
+                          'https://www.google.com/search?q=${Uri.encodeComponent("${item.name} grocery price")}&tbm=shop';
+                      _launch(Uri.parse(url));
+                    },
                   ),
                 ],
               ),
             ),
           ],
         ],
+      ),
+        ),
       ),
     );
   }
@@ -488,8 +802,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
             if (isAssigned)
               Padding(
                 padding: const EdgeInsets.only(right: 4),
-                child:
-                    Icon(Icons.check_circle, size: 13, color: color),
+                child: Icon(Icons.check_circle, size: 13, color: color),
               ),
             Icon(store?.icon ?? Icons.store,
                 size: 13,
@@ -499,9 +812,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
               storeName,
               style: TextStyle(
                 fontSize: 11,
-                fontWeight: isAssigned
-                    ? FontWeight.w600
-                    : FontWeight.normal,
+                fontWeight: isAssigned ? FontWeight.w600 : FontWeight.normal,
                 color: isAssigned ? color : Colors.grey[700],
               ),
             ),
@@ -540,8 +851,7 @@ class _InfoBanner extends StatelessWidget {
           ),
           TextButton(
             onPressed: onAction,
-            child: Text(actionLabel,
-                style: const TextStyle(fontSize: 12)),
+            child: Text(actionLabel, style: const TextStyle(fontSize: 12)),
           ),
         ],
       ),

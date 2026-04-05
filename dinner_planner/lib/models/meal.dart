@@ -5,6 +5,7 @@ class Meal {
   final String instructions;
   final String? imageUrl;
   final int servings;
+  final String? sourceUrl;
 
   Meal({
     this.id,
@@ -12,6 +13,7 @@ class Meal {
     required this.instructions,
     this.imageUrl,
     this.servings = 1,
+    this.sourceUrl,
   });
 
   factory Meal.fromJson(Map<String, dynamic> json) {
@@ -21,6 +23,7 @@ class Meal {
       instructions: json['instructions'],
       imageUrl: json['image_url'],
       servings: (json['servings'] as int?) ?? 1,
+      sourceUrl: json['source_url'] as String?,
     );
   }
 
@@ -30,6 +33,7 @@ class Meal {
       'instructions': instructions,
       'image_url': imageUrl,
       'servings': servings,
+      if (sourceUrl != null) 'source_url': sourceUrl,
     };
   }
 }

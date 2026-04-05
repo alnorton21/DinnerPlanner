@@ -52,4 +52,40 @@ class SupabaseService {
   Future<void> clearMealPlanSlot(int planId) async {
     await client.from('meal_plans').delete().eq('id', planId);
   }
+
+  Future<Map<String, dynamic>?> loadShoppingState(
+      String userId, String weekStart) async {
+    try {
+      return await client
+          .from('shopping_list_state')
+          .select()
+          .eq('user_id', userId)
+          .eq('week_start', weekStart)
+          .maybeSingle();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> saveShoppingState(
+    String userId,
+    String weekStart,
+    Map<String, dynamic> assignments,
+    Map<String, dynamic> prices,
+    List<Map<String, dynamic>> customItems,
+    List<String> checkedItems,
+  ) async {
+    await client.from('shopping_list_state').upsert(
+      {
+        'user_id': userId,
+        'week_start': weekStart,
+        'assignments': assignments,
+        'prices': prices,
+        'custom_items': customItems,
+        'checked_items': checkedItems,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      onConflict: 'user_id,week_start',
+    );
+  }
 }
