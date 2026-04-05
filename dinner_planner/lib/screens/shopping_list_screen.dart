@@ -4,6 +4,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/meal_plan.dart';
 import '../models/shopping_item.dart';
+import '../models/store_info.dart';
+import 'store_preferences_screen.dart';
+import 'store_list_screen.dart';
 
 class ShoppingListScreen extends StatefulWidget {
   final List<MealPlan> plans;
@@ -20,37 +23,43 @@ class ShoppingListScreen extends StatefulWidget {
 }
 
 class _ShoppingListScreenState extends State<ShoppingListScreen> {
-  static const List<String> _dayAbbr = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   static const List<String> _monthAbbr = [
     '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
   ];
-  static const double _calorieTarget = 2000;
-  static const double _proteinTarget = 150;
 
   bool _loading = true;
   List<ShoppingItem> _items = [];
-  List<Map<String, double>> _dailyNutrition =
-      List.generate(7, (_) => {'calories': 0, 'protein': 0});
+
+  // User's selected stores
+  List<String> _selectedStores = [];
+
+  // Per-item store assignment:  itemKey → store name
+  final Map<String, String> _assignments = {};
+
+  // Per-item price:  itemKey → price (user-entered)
+  final Map<String, double?> _prices = {};
 
   @override
   void initState() {
     super.initState();
-    _buildShoppingList();
+    _init();
   }
 
+  Future<void> _init() async {
+    await Future.wait([_buildShoppingList(), _loadStorePreferences()]);
+    setState(() => _loading = false);
+  }
+
+  String _itemKey(ShoppingItem item) =>
+      '${item.name.toLowerCase()}_${item.unit.toLowerCase()}';
+
   Future<void> _buildShoppingList() async {
-    // Count how many times each meal appears in the week so quantities multiply correctly
-    // e.g. if Chicken Salad is planned Monday AND Thursday, buy 2x the ingredients
     final mealIdCounts = <int, int>{};
     for (final p in widget.plans.where((p) => p.mealId != null)) {
       mealIdCounts[p.mealId!] = (mealIdCounts[p.mealId!] ?? 0) + 1;
     }
-
-    if (mealIdCounts.isEmpty) {
-      setState(() => _loading = false);
-      return;
-    }
+    if (mealIdCounts.isEmpty) return;
 
     final response = await Supabase.instance.client
         .from('ingredients')
@@ -58,8 +67,6 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
         .inFilter('meal_id', mealIdCounts.keys.toList());
 
     final rows = response as List;
-
-    // Aggregate shopping items — multiply each ingredient by how many times its meal appears
     final Map<String, ShoppingItem> aggregated = {};
     for (final row in rows) {
       final name = (row['name'] as String? ?? '').trim();
@@ -90,194 +97,128 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
         );
       }
     }
-
-    final items = aggregated.values.toList()
+    _items = aggregated.values.toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  }
 
-    // Compute daily nutrition — count per-day meal occurrences for accuracy
-    final dailyNutrition = List.generate(7, (_) => {'calories': 0.0, 'protein': 0.0});
-    for (int day = 0; day < 7; day++) {
-      // Build a count map for this specific day
-      final dayMealCounts = <int, int>{};
-      for (final p in widget.plans.where((p) => p.dayOfWeek == day && p.mealId != null)) {
-        dayMealCounts[p.mealId!] = (dayMealCounts[p.mealId!] ?? 0) + 1;
+  Future<void> _loadStorePreferences() async {
+    try {
+      final userId = Supabase.instance.client.auth.currentUser!.id;
+      final data = await Supabase.instance.client
+          .from('user_store_preferences')
+          .select('stores')
+          .eq('user_id', userId)
+          .maybeSingle();
+      if (data != null) {
+        _selectedStores = List<String>.from(data['stores'] as List);
       }
-      for (final row in rows) {
-        final mealId = row['meal_id'];
-        final count = dayMealCounts[mealId] ?? 0;
-        if (count > 0) {
-          dailyNutrition[day]['calories'] =
-              (dailyNutrition[day]['calories'] ?? 0) +
-              ((row['calories'] as num?)?.toDouble() ?? 0.0) * count;
-          dailyNutrition[day]['protein'] =
-              (dailyNutrition[day]['protein'] ?? 0) +
-              ((row['protein'] as num?)?.toDouble() ?? 0.0) * count;
-        }
+    } catch (_) {
+      _selectedStores = [];
+    }
+  }
+
+  Future<void> _openStorePreferences() async {
+    final result = await Navigator.push<List<String>>(
+      context,
+      MaterialPageRoute(builder: (_) => const StorePreferencesScreen()),
+    );
+    if (result != null) {
+      setState(() => _selectedStores = result);
+    }
+  }
+
+  Future<void> _launch(Uri uri) async {
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open link.')),
+        );
       }
     }
+  }
 
+  void _assignStore(ShoppingItem item, String storeName) {
+    final key = _itemKey(item);
     setState(() {
-      _items = items;
-      _dailyNutrition = dailyNutrition;
-      _loading = false;
+      if (_assignments[key] == storeName) {
+        // Tap same store again → unassign
+        _assignments.remove(key);
+      } else {
+        _assignments[key] = storeName;
+      }
     });
   }
 
-  Future<void> _openNearbyStores() async {
-    final uri = Uri.parse('https://www.google.com/maps/search/grocery+stores+near+me');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
-  }
+  void _editPrice(ShoppingItem item) {
+    final key = _itemKey(item);
+    final controller =
+        TextEditingController(text: _prices[key]?.toStringAsFixed(2) ?? '');
 
-  Future<void> _searchIngredientInStores(String ingredientName) async {
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                child: Text(
-                  'Find "$ingredientName"',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-              ),
-              const Divider(),
-              _StoreOption(
-                icon: Icons.map_rounded,
-                iconColor: Colors.green,
-                label: 'Nearby grocery stores',
-                subtitle: 'Opens Google Maps',
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final uri = Uri.parse(
-                      'https://www.google.com/maps/search/grocery+stores+near+me');
-                  if (await canLaunchUrl(uri)) {
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  }
-                },
-              ),
-              _StoreOption(
-                icon: Icons.search_rounded,
-                iconColor: Colors.blue,
-                label: 'Google Shopping',
-                subtitle: 'Compare prices online',
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final encoded = Uri.encodeComponent(ingredientName);
-                  final uri = Uri.parse(
-                      'https://www.google.com/search?q=$encoded&tbm=shop');
-                  if (await canLaunchUrl(uri)) {
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  }
-                },
-              ),
-              _StoreOption(
-                icon: Icons.shopping_cart_rounded,
-                iconColor: const Color(0xFF007DC6),
-                label: 'Walmart',
-                subtitle: 'Search Walmart grocery',
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final encoded = Uri.encodeComponent(ingredientName);
-                  final uri = Uri.parse(
-                      'https://www.walmart.com/search?q=$encoded&cat_id=976759');
-                  if (await canLaunchUrl(uri)) {
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  }
-                },
-              ),
-              _StoreOption(
-                icon: Icons.local_shipping_rounded,
-                iconColor: const Color(0xFFFF9900),
-                label: 'Amazon Fresh',
-                subtitle: 'Order for delivery',
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final encoded = Uri.encodeComponent(ingredientName);
-                  final uri = Uri.parse(
-                      'https://www.amazon.com/s?k=$encoded&i=amazonfresh');
-                  if (await canLaunchUrl(uri)) {
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  }
-                },
-              ),
-              _StoreOption(
-                icon: Icons.storefront_rounded,
-                iconColor: const Color(0xFFCC0000),
-                label: 'Target',
-                subtitle: 'Search Target grocery',
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final encoded = Uri.encodeComponent(ingredientName);
-                  final uri = Uri.parse(
-                      'https://www.target.com/s?searchTerm=$encoded&category=grocery');
-                  if (await canLaunchUrl(uri)) {
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  }
-                },
-              ),
-              _StoreOption(
-                icon: Icons.local_grocery_store_rounded,
-                iconColor: const Color(0xFF009A44),
-                label: 'ShopRite',
-                subtitle: 'Search ShopRite grocery',
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final encoded = Uri.encodeComponent(ingredientName);
-                  final uri = Uri.parse(
-                      'https://www.shoprite.com/sm/planning/rsid/3000/results?q=$encoded');
-                  if (await canLaunchUrl(uri)) {
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  }
-                },
-              ),
-              _StoreOption(
-                icon: Icons.savings_rounded,
-                iconColor: const Color(0xFF00539B),
-                label: 'Aldi',
-                subtitle: 'Browse Aldi products',
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final encoded = Uri.encodeComponent(ingredientName);
-                  final uri = Uri.parse(
-                      'https://www.aldi.us/en/grocery-items/?q=$encoded');
-                  if (await canLaunchUrl(uri)) {
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  }
-                },
-              ),
-            ],
+      builder: (ctx) => AlertDialog(
+        title: Text('Price for ${item.name}'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            prefixText: '\$ ',
+            labelText: 'Estimated price',
+            border: OutlineInputBorder(),
           ),
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          autofocus: true,
         ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              setState(() => _prices.remove(key));
+              Navigator.pop(ctx);
+            },
+            child: const Text('Clear'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final val = double.tryParse(controller.text.trim());
+              setState(() {
+                if (val != null) {
+                  _prices[key] = val;
+                }
+              });
+              Navigator.pop(ctx);
+            },
+            child: const Text('Save'),
+          ),
+        ],
       ),
     );
   }
 
   void _copyList() {
     if (_items.isEmpty) return;
-    final buffer = StringBuffer();
-    buffer.writeln(
+    final buf = StringBuffer();
+    buf.writeln(
         'Shopping List – Week of ${_monthAbbr[widget.weekStart.month]} ${widget.weekStart.day}');
-    buffer.writeln('');
+    buf.writeln('');
     for (final item in _items) {
       final qty = item.totalQuantity % 1 == 0
           ? item.totalQuantity.toInt().toString()
           : item.totalQuantity.toStringAsFixed(1);
-      buffer.writeln('- ${item.name}: $qty ${item.unit}');
+      final store = _assignments[_itemKey(item)];
+      final storeLabel = store != null ? '  [$store]' : '';
+      final price = _prices[_itemKey(item)];
+      final priceLabel = price != null ? '  \$${price.toStringAsFixed(2)}' : '';
+      buf.writeln('• ${item.name}: $qty ${item.unit}$storeLabel$priceLabel');
     }
-    Clipboard.setData(ClipboardData(text: buffer.toString()));
+    Clipboard.setData(ClipboardData(text: buf.toString()));
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Shopping list copied to clipboard')),
     );
   }
+
+  int get _assignedCount =>
+      _items.where((i) => _assignments.containsKey(_itemKey(i))).length;
 
   @override
   Widget build(BuildContext context) {
@@ -290,8 +231,8 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.store_rounded),
-            tooltip: 'Find nearby grocery stores',
-            onPressed: _openNearbyStores,
+            tooltip: 'My stores',
+            onPressed: _openStorePreferences,
           ),
           IconButton(
             icon: const Icon(Icons.copy),
@@ -302,181 +243,308 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildNutritionSection(),
-                const Divider(height: 1),
-                _buildShoppingListSection(),
-              ],
-            ),
+          : _buildBody(),
+      floatingActionButton: _items.isNotEmpty
+          ? FloatingActionButton.extended(
+              icon: const Icon(Icons.list_alt_rounded),
+              label: Text(_assignedCount > 0
+                  ? 'View by store ($_assignedCount/${_items.length})'
+                  : 'View by store'),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => StoreListScreen(
+                    items: _items,
+                    assignments: Map.from(_assignments),
+                    prices: Map.from(_prices),
+                    weekStart: widget.weekStart,
+                  ),
+                ),
+              ),
+            )
+          : null,
     );
   }
 
-  Widget _buildNutritionSection() {
+  Widget _buildBody() {
+    if (_items.isEmpty) {
+      return const Center(child: Text('No meals planned this week.'));
+    }
+
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: Text('Daily Nutrition',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        ),
-        SizedBox(
-          height: 130,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            itemCount: 7,
-            itemBuilder: (_, i) => _buildDayNutritionCard(i),
+        // ── Store preference banner (shown when no stores selected) ─────────
+        if (_selectedStores.isEmpty)
+          _InfoBanner(
+            message:
+                'Tap the store icon above to select your preferred stores, '
+                'then assign each ingredient.',
+            actionLabel: 'Select stores',
+            onAction: _openStorePreferences,
+          )
+        else
+          _buildStoreSummaryBar(),
+
+        const Divider(height: 1),
+
+        // ── Ingredient list ─────────────────────────────────────────────────
+        Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.only(bottom: 100),
+            itemCount: _items.length,
+            separatorBuilder: (_, __) =>
+                const Divider(height: 1, indent: 16, endIndent: 16),
+            itemBuilder: (_, i) => _buildItemTile(_items[i]),
           ),
         ),
-        const SizedBox(height: 8),
       ],
     );
   }
 
-  Widget _buildDayNutritionCard(int dayIndex) {
-    final date = widget.weekStart.add(Duration(days: dayIndex));
-    final cal = _dailyNutrition[dayIndex]['calories'] ?? 0.0;
-    final pro = _dailyNutrition[dayIndex]['protein'] ?? 0.0;
-    final calProgress = (cal / _calorieTarget).clamp(0.0, 1.0);
-    final proProgress = (pro / _proteinTarget).clamp(0.0, 1.0);
+  Widget _buildStoreSummaryBar() {
+    final total = _prices.values
+        .where((p) => p != null)
+        .fold<double>(0, (sum, p) => sum + p!);
+    final hasPrice = _prices.values.any((p) => p != null);
 
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      child: Container(
-        width: 110,
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: Theme.of(context).primaryColor.withValues(alpha: 0.07),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${_selectedStores.length} store${_selectedStores.length == 1 ? '' : 's'} selected',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 13),
+                ),
+                Text(
+                  '$_assignedCount of ${_items.length} items assigned'
+                  '${hasPrice ? '  ·  est. \$${total.toStringAsFixed(2)}' : ''}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            icon: const Icon(Icons.tune, size: 16),
+            label: const Text('Edit'),
+            style: TextButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
+            onPressed: _openStorePreferences,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildItemTile(ShoppingItem item) {
+    final key = _itemKey(item);
+    final assignedStore = _assignments[key];
+    final price = _prices[key];
+    final qty = item.totalQuantity % 1 == 0
+        ? item.totalQuantity.toInt().toString()
+        : item.totalQuantity.toStringAsFixed(1);
+    final displayName =
+        item.name[0].toUpperCase() + item.name.substring(1);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Item name + quantity + price ──────────────────────────────────
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 3),
+                child: Icon(Icons.shopping_basket_outlined,
+                    size: 20, color: Colors.grey),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(displayName,
+                        style: const TextStyle(
+                            fontSize: 15, fontWeight: FontWeight.w500)),
+                    Text('$qty ${item.unit}',
+                        style: TextStyle(
+                            fontSize: 13, color: Colors.grey[600])),
+                  ],
+                ),
+              ),
+              // Price chip / button
+              GestureDetector(
+                onTap: () => _editPrice(item),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: price != null
+                        ? Colors.green.shade50
+                        : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: price != null
+                          ? Colors.green.shade300
+                          : Colors.grey.shade300,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        price != null
+                            ? Icons.attach_money
+                            : Icons.add,
+                        size: 14,
+                        color: price != null
+                            ? Colors.green.shade700
+                            : Colors.grey[600],
+                      ),
+                      Text(
+                        price != null
+                            ? price.toStringAsFixed(2)
+                            : 'Price',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: price != null
+                              ? Colors.green.shade700
+                              : Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          // ── Store chips ──────────────────────────────────────────────────
+          if (_selectedStores.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.only(left: 32),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  for (final storeName in _selectedStores)
+                    _buildStoreChip(item, storeName, assignedStore),
+                  // "Find online" chip
+                  ActionChip(
+                    avatar: const Icon(Icons.open_in_new, size: 14),
+                    label: const Text('Find online'),
+                    labelStyle: const TextStyle(fontSize: 11),
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => _launch(Uri.parse(
+                        'https://www.google.com/search?q=${Uri.encodeComponent("${item.name} grocery price")}&tbm=shop')),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStoreChip(
+      ShoppingItem item, String storeName, String? assignedStore) {
+    final store = storeByName(storeName);
+    final isAssigned = assignedStore == storeName;
+    final color = store?.color ?? Colors.grey;
+
+    return GestureDetector(
+      onTap: () => _assignStore(item, storeName),
+      onLongPress: () => _launch(
+          Uri.parse(store?.searchUrl(item.name) ??
+              'https://www.google.com/search?q=${Uri.encodeComponent(item.name)}')),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: isAssigned
+              ? color.withValues(alpha: 0.15)
+              : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isAssigned ? color : Colors.grey.shade300,
+            width: isAssigned ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
+            if (isAssigned)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child:
+                    Icon(Icons.check_circle, size: 13, color: color),
+              ),
+            Icon(store?.icon ?? Icons.store,
+                size: 13,
+                color: isAssigned ? color : Colors.grey[600]),
+            const SizedBox(width: 4),
             Text(
-              '${_dayAbbr[dayIndex]} ${date.day}',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            ),
-            const SizedBox(height: 6),
-            Text('${cal.toInt()} kcal', style: const TextStyle(fontSize: 11)),
-            const SizedBox(height: 2),
-            LinearProgressIndicator(
-              value: calProgress,
-              color: Colors.orange,
-              backgroundColor: Colors.orange.shade100,
-              minHeight: 6,
-              borderRadius: BorderRadius.circular(3),
-            ),
-            const SizedBox(height: 6),
-            Text('${pro.toInt()}g protein', style: const TextStyle(fontSize: 11)),
-            const SizedBox(height: 2),
-            LinearProgressIndicator(
-              value: proProgress,
-              color: Colors.blue,
-              backgroundColor: Colors.blue.shade100,
-              minHeight: 6,
-              borderRadius: BorderRadius.circular(3),
+              storeName,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: isAssigned
+                    ? FontWeight.w600
+                    : FontWeight.normal,
+                color: isAssigned ? color : Colors.grey[700],
+              ),
             ),
           ],
         ),
       ),
     );
   }
-
-  Widget _buildShoppingListSection() {
-    if (_items.isEmpty) {
-      return const Expanded(
-        child: Center(child: Text('No meals planned this week.')),
-      );
-    }
-
-    return Expanded(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: Row(
-              children: [
-                Text(
-                  'Ingredients (${_items.length} items)',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                const Spacer(),
-                const Text(
-                  'Tap  to find in stores',
-                  style: TextStyle(fontSize: 11, color: Colors.grey),
-                ),
-                const Icon(Icons.store_rounded, size: 14, color: Colors.grey),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.only(bottom: 16),
-              itemCount: _items.length,
-              itemBuilder: (_, i) {
-                final item = _items[i];
-                final qty = item.totalQuantity % 1 == 0
-                    ? item.totalQuantity.toInt().toString()
-                    : item.totalQuantity.toStringAsFixed(1);
-                final displayName =
-                    item.name[0].toUpperCase() + item.name.substring(1);
-                return ListTile(
-                  leading: const Icon(Icons.shopping_basket_outlined),
-                  title: Text(displayName),
-                  subtitle: Text('$qty ${item.unit}'),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (item.totalCalories > 0)
-                        Text(
-                          '${item.totalCalories.toInt()} kcal',
-                          style: const TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
-                      const SizedBox(width: 4),
-                      IconButton(
-                        icon: const Icon(Icons.store_rounded, size: 20),
-                        color: Colors.green,
-                        tooltip: 'Find in stores',
-                        onPressed: () =>
-                            _searchIngredientInStores(item.name),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
-class _StoreOption extends StatelessWidget {
-  final IconData icon;
-  final Color iconColor;
-  final String label;
-  final String subtitle;
-  final VoidCallback onTap;
+// ── Helper widgets ────────────────────────────────────────────────────────────
 
-  const _StoreOption({
-    required this.icon,
-    required this.iconColor,
-    required this.label,
-    required this.subtitle,
-    required this.onTap,
+class _InfoBanner extends StatelessWidget {
+  final String message;
+  final String actionLabel;
+  final VoidCallback onAction;
+
+  const _InfoBanner({
+    required this.message,
+    required this.actionLabel,
+    required this.onAction,
   });
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: iconColor.withValues(alpha: 0.12),
-        child: Icon(icon, color: iconColor, size: 20),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+      color: Colors.blue.shade50,
+      child: Row(
+        children: [
+          const Icon(Icons.info_outline, size: 18, color: Colors.blue),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(message,
+                style: const TextStyle(fontSize: 12, color: Colors.black87)),
+          ),
+          TextButton(
+            onPressed: onAction,
+            child: Text(actionLabel,
+                style: const TextStyle(fontSize: 12)),
+          ),
+        ],
       ),
-      title: Text(label),
-      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
-      onTap: onTap,
     );
   }
 }

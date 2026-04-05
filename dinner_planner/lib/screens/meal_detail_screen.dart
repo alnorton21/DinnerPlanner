@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'add_ingredient_screen.dart';
+import 'edit_meal_screen.dart';
 
 class MealDetailScreen extends StatefulWidget {
   final int mealId;
@@ -17,7 +17,6 @@ class _MealDetailScreenState extends State<MealDetailScreen> {
 
   Map<String, dynamic>? meal;
   List ingredients = [];
-
   bool loading = true;
 
   @override
@@ -27,7 +26,6 @@ class _MealDetailScreenState extends State<MealDetailScreen> {
   }
 
   Future<void> loadMeal() async {
-
     final data = await supabase
         .from('meals')
         .select('*, ingredients(*)')
@@ -42,300 +40,172 @@ class _MealDetailScreenState extends State<MealDetailScreen> {
   }
 
   Future<void> deleteMeal() async {
-
-    await supabase
-        .from('meals')
-        .delete()
-        .eq('id', widget.mealId);
-
-    Navigator.pop(context);
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete meal?'),
+        content: const Text('This will permanently delete the meal and all its ingredients.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    await supabase.from('meals').delete().eq('id', widget.mealId);
+    if (mounted) Navigator.pop(context);
   }
 
-  Future<void> deleteIngredient(int ingredientId) async {
-
-    await supabase
-        .from('ingredients')
-        .delete()
-        .eq('id', ingredientId);
-
-    loadMeal();
-  }
-
-  Map<String, double> calculateNutrition(List ingredients) {
-
-    double calories = 0;
-    double protein = 0;
-    double carbs = 0;
-    double fat = 0;
-
-    for (var ingredient in ingredients) {
-
-      calories += (ingredient['calories'] ?? 0).toDouble();
-      protein += (ingredient['protein'] ?? 0).toDouble();
-      carbs += (ingredient['carbs'] ?? 0).toDouble();
-      fat += (ingredient['fat'] ?? 0).toDouble();
-
+  Map<String, double> _calcNutrition() {
+    double calories = 0, protein = 0, carbs = 0, fat = 0;
+    for (var ing in ingredients) {
+      calories += (ing['calories'] ?? 0).toDouble();
+      protein += (ing['protein'] ?? 0).toDouble();
+      carbs += (ing['carbs'] ?? 0).toDouble();
+      fat += (ing['fat'] ?? 0).toDouble();
     }
-
-    return {
-      "calories": calories,
-      "protein": protein,
-      "carbs": carbs,
-      "fat": fat
-    };
+    return {'calories': calories, 'protein': protein, 'carbs': carbs, 'fat': fat};
   }
 
   @override
   Widget build(BuildContext context) {
-
     if (loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    final nutrition = calculateNutrition(ingredients);
+    final servings = (meal!['servings'] as int?) ?? 1;
+    final total = _calcNutrition();
+    final nutrition = servings > 1
+        ? {
+            'calories': total['calories']! / servings,
+            'protein': total['protein']! / servings,
+            'carbs': total['carbs']! / servings,
+            'fat': total['fat']! / servings,
+          }
+        : total;
 
     return Scaffold(
-
-      floatingActionButton: FloatingActionButton(
-        child: const Icon(Icons.add),
-        onPressed: () async {
-
-          await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) =>
-                  AddIngredientScreen(mealId: widget.mealId),
-            ),
-          );
-
-          loadMeal();
-        },
-      ),
-
       body: CustomScrollView(
-
         slivers: [
-
           SliverAppBar(
             expandedHeight: 260,
             pinned: true,
-
             actions: [
-
+              IconButton(
+                icon: const Icon(Icons.edit),
+                tooltip: 'Edit meal',
+                onPressed: () async {
+                  final updated = await Navigator.push<bool>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => EditMealScreen(meal: meal!),
+                    ),
+                  );
+                  if (updated == true) loadMeal();
+                },
+              ),
               IconButton(
                 icon: const Icon(Icons.delete),
                 onPressed: deleteMeal,
-              )
-
+              ),
             ],
-
             flexibleSpace: FlexibleSpaceBar(
-
               title: Text(meal!['name']),
-
               background: meal!['image_url'] != null
-                  ? Image.network(
-                      meal!['image_url'],
-                      fit: BoxFit.cover,
-                    )
+                  ? Image.network(meal!['image_url'], fit: BoxFit.cover)
                   : Container(
                       color: Colors.grey[300],
-                      child: const Icon(
-                        Icons.restaurant,
-                        size: 120,
-                      ),
+                      child: const Icon(Icons.restaurant, size: 120),
                     ),
             ),
           ),
-
           SliverToBoxAdapter(
-
             child: Padding(
               padding: const EdgeInsets.all(16),
-
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-
                 children: [
-
-                  const Text(
-                    "Nutrition",
-                    style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      const Text('Nutrition',
+                          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                      Text(
+                        servings > 1
+                            ? 'per serving ($servings servings)'
+                            : 'per serving',
+                        style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                      ),
+                    ],
                   ),
-
                   const SizedBox(height: 10),
-
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
-
                       child: Row(
-                        mainAxisAlignment:
-                            MainAxisAlignment.spaceAround,
-
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
-
-                          Column(
-                            children: [
-                              const Text("Calories"),
-                              Text(
-                                nutrition['calories']!
-                                    .toStringAsFixed(0),
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-
-                          Column(
-                            children: [
-                              const Text("Protein"),
-                              Text(
-                                "${nutrition['protein']!.toStringAsFixed(1)} g",
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-
-                          Column(
-                            children: [
-                              const Text("Carbs"),
-                              Text(
-                                "${nutrition['carbs']!.toStringAsFixed(1)} g",
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-
-                          Column(
-                            children: [
-                              const Text("Fat"),
-                              Text(
-                                "${nutrition['fat']!.toStringAsFixed(1)} g",
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-
+                          _nutritionCol('Calories', nutrition['calories']!.toStringAsFixed(0)),
+                          _nutritionCol('Protein', '${nutrition['protein']!.toStringAsFixed(1)} g'),
+                          _nutritionCol('Carbs', '${nutrition['carbs']!.toStringAsFixed(1)} g'),
+                          _nutritionCol('Fat', '${nutrition['fat']!.toStringAsFixed(1)} g'),
                         ],
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 25),
-
-                  const Text(
-                    "Ingredients",
-                    style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold),
-                  ),
-
+                  const Text('Ingredients',
+                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 10),
-
                   ingredients.isEmpty
-                      ? const Text("No ingredients yet")
-
+                      ? const Text('No ingredients yet')
                       : Column(
-                          children: ingredients.map((ingredient) {
-
-                            return Card(
-
-                              margin:
-                                  const EdgeInsets.only(bottom: 10),
-
-                              child: ListTile(
-
-                                leading:
-                                    const Icon(Icons.kitchen),
-
-                                title: Text(ingredient['name']),
-
-                                subtitle: Text(
-                                  "${ingredient['quantity']} ${ingredient['unit']}",
-                                ),
-
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-
-                                  children: [
-
-                                    IconButton(
-                                      icon:
-                                          const Icon(Icons.edit),
-                                      onPressed: () {
-
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (context) =>
-                                                AddIngredientScreen(
-                                                    mealId: widget.mealId,
-                                                    ingredient: ingredient),
-                                          ),
-                                        ).then((_) =>
-                                            loadMeal());
-                                      },
-                                    ),
-
-                                    IconButton(
-                                      icon:
-                                          const Icon(Icons.delete),
-                                      onPressed: () {
-
-                                        deleteIngredient(
-                                            ingredient['id']);
-                                      },
-                                    ),
-
-                                  ],
-                                ),
+                          children: ingredients.map((ing) => Card(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            child: ListTile(
+                              leading: const Icon(Icons.kitchen),
+                              title: Text(ing['name']),
+                              subtitle: Text('${ing['quantity']} ${ing['unit']}'),
+                              trailing: Text(
+                                '${(ing['calories'] ?? 0).toStringAsFixed(0)} cal',
+                                style: const TextStyle(fontWeight: FontWeight.w500),
                               ),
-                            );
-
-                          }).toList(),
+                            ),
+                          )).toList(),
                         ),
-
-                  const SizedBox(height: 30),
-
-                  const Text(
-                    "Instructions",
-                    style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold),
-                  ),
-
+                  const SizedBox(height: 25),
+                  const Text('Instructions',
+                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 10),
-
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: Colors.grey[100],
-                      borderRadius:
-                          BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-                      meal!['instructions'] ??
-                          "No instructions",
+                      meal!['instructions'] ?? 'No instructions',
                       style: const TextStyle(fontSize: 16),
                     ),
                   ),
-
-                  const SizedBox(height: 40)
-
+                  const SizedBox(height: 40),
                 ],
               ),
             ),
-          )
+          ),
         ],
       ),
+    );
+  }
+
+  Widget _nutritionCol(String label, String value) {
+    return Column(
+      children: [
+        Text(label),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+      ],
     );
   }
 }

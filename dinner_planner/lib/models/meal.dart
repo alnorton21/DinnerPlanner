@@ -4,12 +4,14 @@ class Meal {
   final String name;
   final String instructions;
   final String? imageUrl;
+  final int servings;
 
   Meal({
     this.id,
     required this.name,
     required this.instructions,
     this.imageUrl,
+    this.servings = 1,
   });
 
   factory Meal.fromJson(Map<String, dynamic> json) {
@@ -18,6 +20,7 @@ class Meal {
       name: json['name'],
       instructions: json['instructions'],
       imageUrl: json['image_url'],
+      servings: (json['servings'] as int?) ?? 1,
     );
   }
 
@@ -26,6 +29,7 @@ class Meal {
       'name': name,
       'instructions': instructions,
       'image_url': imageUrl,
+      'servings': servings,
     };
   }
 }

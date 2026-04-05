@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/nutrition_service.dart';
+import 'barcode_scanner_screen.dart';
 
 class AddMealScreen extends StatefulWidget {
   const AddMealScreen({super.key});
@@ -16,6 +17,7 @@ class _AddMealScreenState extends State<AddMealScreen> {
 
   final mealNameController = TextEditingController();
   final instructionsController = TextEditingController();
+  final servingsController = TextEditingController(text: '1');
 
   File? imageFile;
   String? imageUrl;
@@ -74,6 +76,7 @@ class _AddMealScreenState extends State<AddMealScreen> {
   void dispose() {
     mealNameController.dispose();
     instructionsController.dispose();
+    servingsController.dispose();
     ingredientNameController.dispose();
     quantityController.removeListener(scaleNutrition);
     quantityController.dispose();
@@ -95,7 +98,7 @@ class _AddMealScreenState extends State<AddMealScreen> {
     }
     final response = await supabase
         .from('ingredients')
-        .select('name, unit, calories, protein, carbs, fat')
+        .select('name, quantity, unit, calories, protein, carbs, fat')
         .inFilter('meal_id', mealIds);
     final seen = <String>{};
     final deduped = <Map<String, dynamic>>[];
@@ -111,17 +114,23 @@ class _AddMealScreenState extends State<AddMealScreen> {
   }
 
   void _selectUserIngredient(Map<String, dynamic> ing) {
+    final qty = double.tryParse(ing['quantity']?.toString() ?? '100') ?? 100;
+    final unit = ing['unit']?.toString() ?? 'g';
+    final gramFactor = unitToGram[unit] ?? 1;
+    final grams = qty * gramFactor;
+    if (grams > 0) {
+      baseNutrition = {
+        'calories': ((ing['calories'] as num?)?.toDouble() ?? 0) / grams * 100,
+        'protein': ((ing['protein'] as num?)?.toDouble() ?? 0) / grams * 100,
+        'carbs': ((ing['carbs'] as num?)?.toDouble() ?? 0) / grams * 100,
+        'fat': ((ing['fat'] as num?)?.toDouble() ?? 0) / grams * 100,
+      };
+    }
     setState(() {
       ingredientNameController.text = ing['name'];
       _autocompleteController?.text = ing['name'];
       quantityController.text = '100';
-      unitController.text = ing['unit'] ?? 'g';
-      baseNutrition = {
-        'calories': (ing['calories'] as num?)?.toDouble() ?? 0,
-        'protein': (ing['protein'] as num?)?.toDouble() ?? 0,
-        'carbs': (ing['carbs'] as num?)?.toDouble() ?? 0,
-        'fat': (ing['fat'] as num?)?.toDouble() ?? 0,
-      };
+      unitController.text = unitToGram.containsKey(unit) ? unit : 'g';
       scaleNutrition();
     });
   }
@@ -272,6 +281,43 @@ class _AddMealScreenState extends State<AddMealScreen> {
     });
   }
 
+  Future<void> _scanBarcode() async {
+    final barcode = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()),
+    );
+    if (barcode == null || !mounted) return;
+
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Looking up product...')));
+
+    final result = await NutritionService.lookupBarcode(barcode);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+
+    if (result == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Product not found. Enter details manually.')),
+      );
+      return;
+    }
+
+    // OpenFoodFacts values are per 100g — set baseNutrition so scaleNutrition works
+    baseNutrition = {
+      'calories': (result['calories'] as num).toDouble(),
+      'protein': (result['protein'] as num).toDouble(),
+      'carbs': (result['carbs'] as num).toDouble(),
+      'fat': (result['fat'] as num).toDouble(),
+    };
+    setState(() {
+      ingredientNameController.text = result['name'];
+      _autocompleteController?.text = result['name'];
+      unitController.text = 'g';
+      quantityController.text = '100'; // triggers scaleNutrition via listener
+    });
+  }
+
   Future<void> saveMeal() async {
     if (mealNameController.text.trim().isEmpty) return;
 
@@ -284,6 +330,7 @@ class _AddMealScreenState extends State<AddMealScreen> {
       "instructions": instructionsController.text.trim(),
       "image_url": imageUrl,
       "user_id": userId,
+      "servings": int.tryParse(servingsController.text.trim()) ?? 1,
     }).select().single();
 
     final mealId = mealResponse['id'];
@@ -301,7 +348,7 @@ class _AddMealScreenState extends State<AddMealScreen> {
       });
     }
 
-    Navigator.pop(context);
+    if (mounted) Navigator.pop(context);
   }
 
   @override
@@ -338,6 +385,22 @@ class _AddMealScreenState extends State<AddMealScreen> {
                 ? Image.file(imageFile!, width: 80, height: 80, fit: BoxFit.cover)
                 : const SizedBox()
           ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            const Text("Servings:"),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 70,
+              child: TextField(
+                controller: servingsController,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                ),
+                keyboardType: TextInputType.number,
+              ),
+            ),
+          ]),
           const Divider(height: 30),
           const Text("Add Ingredients", style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
@@ -363,6 +426,15 @@ class _AddMealScreenState extends State<AddMealScreen> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _scanBarcode,
+              icon: const Icon(Icons.qr_code_scanner),
+              label: const Text('Scan Barcode'),
+            ),
           ),
           const SizedBox(height: 10),
           if (!_showUserIngredients) ...[
@@ -421,7 +493,7 @@ class _AddMealScreenState extends State<AddMealScreen> {
                       .map((ing) => ListTile(
                             dense: true,
                             title: Text(ing['name']),
-                            subtitle: Text('${ing['unit']} · ${(ing['calories'] as num?)?.toStringAsFixed(0) ?? 0} kcal/serving'),
+                            subtitle: Text('${ing['unit']} · ${(ing['calories'] as num?)?.toStringAsFixed(0) ?? 0} cal/serving'),
                             onTap: () => _selectUserIngredient(ing),
                           ))
                       .toList(),
@@ -523,12 +595,19 @@ class _AddMealScreenState extends State<AddMealScreen> {
                           carbsController.text = ing["carbs"].toString();
                           fatController.text = ing["fat"].toString();
 
-                          baseNutrition = {
-                            "calories": ing["calories"],
-                            "protein": ing["protein"],
-                            "carbs": ing["carbs"],
-                            "fat": ing["fat"],
-                          };
+                          // Reverse-engineer per-100g base nutrition
+                          final qty = double.tryParse(ing["quantity"]?.toString() ?? '100') ?? 100;
+                          final unit = ing["unit"]?.toString() ?? 'g';
+                          final gramFactor = unitToGram[unit] ?? 1;
+                          final grams = qty * gramFactor;
+                          if (grams > 0) {
+                            baseNutrition = {
+                              "calories": ((ing["calories"] as num?)?.toDouble() ?? 0) / grams * 100,
+                              "protein": ((ing["protein"] as num?)?.toDouble() ?? 0) / grams * 100,
+                              "carbs": ((ing["carbs"] as num?)?.toDouble() ?? 0) / grams * 100,
+                              "fat": ((ing["fat"] as num?)?.toDouble() ?? 0) / grams * 100,
+                            };
+                          }
 
                           editingIndex = index;
                         });

@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'add_meal_screen.dart';
 import 'meal_list_screen.dart';
 import 'meal_planner_screen.dart';
+import 'profile_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -67,6 +68,18 @@ class HomeScreen extends StatelessWidget {
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => const MealPlannerScreen()),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _NavCard(
+                      icon: Icons.person_rounded,
+                      iconColor: Colors.white,
+                      iconBg: const Color(0xFF0288D1),
+                      title: 'Profile & Goals',
+                      subtitle: 'Set your daily nutrition targets',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ProfileScreen()),
                       ),
                     ),
                   ],

@@ -40,7 +40,7 @@ class SupabaseService {
     final weekStartStr = weekStart.toIso8601String().substring(0, 10);
     final response = await client
         .from('meal_plans')
-        .select('*, meals(name, image_url)')
+        .select('*, meals(name, image_url, servings, ingredients(calories, protein, carbs, fat))')
         .eq('week_start', weekStartStr);
     return (response as List).map((e) => MealPlan.fromJson(e)).toList();
   }

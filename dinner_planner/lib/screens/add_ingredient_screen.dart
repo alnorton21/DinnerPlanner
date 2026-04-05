@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/nutrition_service.dart';
+import 'barcode_scanner_screen.dart';
 
 class AddIngredientScreen extends StatefulWidget {
   final int mealId;
@@ -21,7 +22,6 @@ class _AddIngredientScreenState extends State<AddIngredientScreen> {
 
   final nameController = TextEditingController();
   final quantityController = TextEditingController();
-  final unitController = TextEditingController();
   final caloriesController = TextEditingController();
   final proteinController = TextEditingController();
   final carbsController = TextEditingController();
@@ -29,6 +29,26 @@ class _AddIngredientScreenState extends State<AddIngredientScreen> {
   final _myIngredientFilterController = TextEditingController();
 
   TextEditingController? _autocompleteController;
+
+  String _selectedUnit = 'g';
+
+  final Map<String, double> unitToGram = {
+    'g': 1,
+    'kg': 1000,
+    'oz': 28.3495,
+    'lb': 453.592,
+    'cup': 240,
+    'tbsp': 15,
+    'tsp': 5,
+  };
+
+  // Nutrition values per 100g — drives scaleNutrition
+  Map<String, double> baseNutrition = {
+    'calories': 0,
+    'protein': 0,
+    'carbs': 0,
+    'fat': 0,
+  };
 
   bool _showUserIngredients = false;
   bool _userIngredientsLoaded = false;
@@ -39,23 +59,49 @@ class _AddIngredientScreenState extends State<AddIngredientScreen> {
   @override
   void initState() {
     super.initState();
+
     if (isEditing) {
       final ing = widget.ingredient!;
       nameController.text = ing['name'] ?? '';
-      quantityController.text = ing['quantity']?.toString() ?? '';
-      unitController.text = ing['unit'] ?? '';
-      caloriesController.text = ing['calories']?.toString() ?? '';
-      proteinController.text = ing['protein']?.toString() ?? '';
-      carbsController.text = ing['carbs']?.toString() ?? '';
-      fatController.text = ing['fat']?.toString() ?? '';
+
+      final qty = double.tryParse(ing['quantity']?.toString() ?? '100') ?? 100;
+      final unit = ing['unit']?.toString() ?? 'g';
+      _selectedUnit = unitToGram.containsKey(unit) ? unit : 'g';
+      quantityController.text =
+          qty == qty.truncateToDouble() ? qty.toInt().toString() : qty.toString();
+
+      final cal = (ing['calories'] as num?)?.toDouble() ?? 0;
+      final pro = (ing['protein'] as num?)?.toDouble() ?? 0;
+      final carb = (ing['carbs'] as num?)?.toDouble() ?? 0;
+      final fat = (ing['fat'] as num?)?.toDouble() ?? 0;
+
+      caloriesController.text = cal.toStringAsFixed(1);
+      proteinController.text = pro.toStringAsFixed(1);
+      carbsController.text = carb.toStringAsFixed(1);
+      fatController.text = fat.toStringAsFixed(1);
+
+      // Reverse-engineer per-100g base nutrition
+      final gramFactor = unitToGram[_selectedUnit] ?? 1;
+      final grams = qty * gramFactor;
+      if (grams > 0) {
+        baseNutrition = {
+          'calories': cal / grams * 100,
+          'protein': pro / grams * 100,
+          'carbs': carb / grams * 100,
+          'fat': fat / grams * 100,
+        };
+      }
     }
+
+    // Add listener AFTER setting initial values to avoid triggering during init
+    quantityController.addListener(scaleNutrition);
   }
 
   @override
   void dispose() {
+    quantityController.removeListener(scaleNutrition);
     nameController.dispose();
     quantityController.dispose();
-    unitController.dispose();
     caloriesController.dispose();
     proteinController.dispose();
     carbsController.dispose();
@@ -64,48 +110,51 @@ class _AddIngredientScreenState extends State<AddIngredientScreen> {
     super.dispose();
   }
 
+  void scaleNutrition() {
+    final quantity = double.tryParse(quantityController.text) ?? 0;
+    final factor = unitToGram[_selectedUnit] ?? 1;
+    final grams = quantity * factor;
+    if (grams <= 0) return;
+    setState(() {
+      caloriesController.text =
+          ((baseNutrition['calories'] ?? 0) * grams / 100).toStringAsFixed(1);
+      proteinController.text =
+          ((baseNutrition['protein'] ?? 0) * grams / 100).toStringAsFixed(1);
+      carbsController.text =
+          ((baseNutrition['carbs'] ?? 0) * grams / 100).toStringAsFixed(1);
+      fatController.text =
+          ((baseNutrition['fat'] ?? 0) * grams / 100).toStringAsFixed(1);
+    });
+  }
+
   Future<List<Map<String, dynamic>>> searchFoods(String query) async {
     if (query.length < 2) return [];
-
     final cached = await supabase
         .from('food_cache')
         .select()
         .ilike('name', '%$query%')
         .limit(10);
-
     if (cached.isNotEmpty) {
-      return cached.map<Map<String, dynamic>>((f) {
-        return {
-          'name': f['name'],
-          'calories': f['calories'],
-          'protein': f['protein'],
-          'carbs': f['carbs'],
-          'fat': f['fat'],
-        };
-      }).toList();
+      return cached.map<Map<String, dynamic>>((f) => {
+            'name': f['name'],
+            'calories': f['calories'],
+            'protein': f['protein'],
+            'carbs': f['carbs'],
+            'fat': f['fat'],
+          }).toList();
     }
-
     final apiFoods = await NutritionService.searchFood(query);
-    return apiFoods.map<Map<String, dynamic>>((food) {
-      return {
-        'fdcId': food['fdcId'],
-        'name': food['description'],
-        'nutrients': food['foodNutrients'],
-      };
-    }).toList();
+    return apiFoods.map<Map<String, dynamic>>((food) => {
+          'fdcId': food['fdcId'],
+          'name': food['description'],
+          'nutrients': food['foodNutrients'],
+        }).toList();
   }
 
   Future<void> selectFood(Map food) async {
-    nameController.text = food['name'];
-    _autocompleteController?.text = food['name'];
-
+    Map<String, double> nutrients;
     if (food.containsKey('nutrients')) {
-      final nutrients = NutritionService.extractNutrition(food['nutrients']);
-      caloriesController.text = nutrients['calories'].toString();
-      proteinController.text = nutrients['protein'].toString();
-      carbsController.text = nutrients['carbs'].toString();
-      fatController.text = nutrients['fat'].toString();
-
+      nutrients = NutritionService.extractNutrition(food['nutrients']);
       await supabase.from('food_cache').insert({
         'fdc_id': food['fdcId'],
         'name': food['name'],
@@ -115,11 +164,20 @@ class _AddIngredientScreenState extends State<AddIngredientScreen> {
         'fat': nutrients['fat'],
       });
     } else {
-      caloriesController.text = food['calories'].toString();
-      proteinController.text = food['protein'].toString();
-      carbsController.text = food['carbs'].toString();
-      fatController.text = food['fat'].toString();
+      nutrients = {
+        'calories': (food['calories'] as num?)?.toDouble() ?? 0,
+        'protein': (food['protein'] as num?)?.toDouble() ?? 0,
+        'carbs': (food['carbs'] as num?)?.toDouble() ?? 0,
+        'fat': (food['fat'] as num?)?.toDouble() ?? 0,
+      };
     }
+    nameController.text = food['name'];
+    _autocompleteController?.text = food['name'];
+    // Set baseNutrition (USDA values are per 100g)
+    baseNutrition = Map<String, double>.from(nutrients);
+    quantityController.text = '100';
+    setState(() => _selectedUnit = 'g');
+    // Listener fires from quantityController.text change and calls scaleNutrition
   }
 
   Future<void> _loadUserIngredients() async {
@@ -131,7 +189,7 @@ class _AddIngredientScreenState extends State<AddIngredientScreen> {
     }
     final response = await supabase
         .from('ingredients')
-        .select('name, unit, calories, protein, carbs, fat')
+        .select('name, quantity, unit, calories, protein, carbs, fat')
         .inFilter('meal_id', mealIds);
     final seen = <String>{};
     final deduped = <Map<String, dynamic>>[];
@@ -147,24 +205,73 @@ class _AddIngredientScreenState extends State<AddIngredientScreen> {
   }
 
   void _selectUserIngredient(Map<String, dynamic> ing) {
-    setState(() {
-      nameController.text = ing['name'];
-      _autocompleteController?.text = ing['name'];
-      quantityController.text = '100';
-      unitController.text = ing['unit'] ?? 'g';
-      caloriesController.text = (ing['calories'] as num?)?.toString() ?? '0';
-      proteinController.text = (ing['protein'] as num?)?.toString() ?? '0';
-      carbsController.text = (ing['carbs'] as num?)?.toString() ?? '0';
-      fatController.text = (ing['fat'] as num?)?.toString() ?? '0';
-    });
+    final qty = double.tryParse(ing['quantity']?.toString() ?? '100') ?? 100;
+    final unit = ing['unit']?.toString() ?? 'g';
+    final gramFactor = unitToGram[unit] ?? 1;
+    final grams = qty * gramFactor;
+    if (grams > 0) {
+      baseNutrition = {
+        'calories': ((ing['calories'] as num?)?.toDouble() ?? 0) / grams * 100,
+        'protein': ((ing['protein'] as num?)?.toDouble() ?? 0) / grams * 100,
+        'carbs': ((ing['carbs'] as num?)?.toDouble() ?? 0) / grams * 100,
+        'fat': ((ing['fat'] as num?)?.toDouble() ?? 0) / grams * 100,
+      };
+    }
+    nameController.text = ing['name'];
+    _autocompleteController?.text = ing['name'];
+    setState(() => _selectedUnit = unitToGram.containsKey(unit) ? unit : 'g');
+    quantityController.text = '100';
+  }
+
+  Future<void> _scanBarcode() async {
+    final barcode = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()),
+    );
+    if (barcode == null || !mounted) return;
+
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Looking up product...')));
+
+    final result = await NutritionService.lookupBarcode(barcode);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+
+    if (result == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Product not found. Enter details manually.')),
+      );
+      return;
+    }
+
+    // OpenFoodFacts values are per 100g
+    baseNutrition = {
+      'calories': (result['calories'] as num).toDouble(),
+      'protein': (result['protein'] as num).toDouble(),
+      'carbs': (result['carbs'] as num).toDouble(),
+      'fat': (result['fat'] as num).toDouble(),
+    };
+    nameController.text = result['name'];
+    _autocompleteController?.text = result['name'];
+    setState(() => _selectedUnit = 'g');
+    quantityController.text = '100'; // triggers scaleNutrition via listener
   }
 
   Future<void> saveIngredient() async {
+    if (nameController.text.trim().isEmpty ||
+        quantityController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a name and quantity.')),
+      );
+      return;
+    }
     final data = {
       'meal_id': widget.mealId,
-      'name': nameController.text,
-      'quantity': quantityController.text,
-      'unit': unitController.text,
+      'name': nameController.text.trim(),
+      'quantity': quantityController.text.trim(),
+      'unit': _selectedUnit,
       'calories': double.tryParse(caloriesController.text) ?? 0,
       'protein': double.tryParse(proteinController.text) ?? 0,
       'carbs': double.tryParse(carbsController.text) ?? 0,
@@ -199,14 +306,14 @@ class _AddIngredientScreenState extends State<AddIngredientScreen> {
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
             const SizedBox(height: 8),
-            // Source toggle
             Row(
               children: [
                 Expanded(
                   child: ChoiceChip(
                     label: const Text('Food Database'),
                     selected: !_showUserIngredients,
-                    onSelected: (_) => setState(() => _showUserIngredients = false),
+                    onSelected: (_) =>
+                        setState(() => _showUserIngredients = false),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -223,6 +330,15 @@ class _AddIngredientScreenState extends State<AddIngredientScreen> {
               ],
             ),
             const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _scanBarcode,
+                icon: const Icon(Icons.qr_code_scanner),
+                label: const Text('Scan Barcode'),
+              ),
+            ),
+            const SizedBox(height: 10),
             if (!_showUserIngredients) ...[
               Autocomplete<Map<String, dynamic>>(
                 displayStringForOption: (option) => option['name'],
@@ -233,10 +349,12 @@ class _AddIngredientScreenState extends State<AddIngredientScreen> {
                   return await searchFoods(textEditingValue.text);
                 },
                 onSelected: (food) => selectFood(food),
-                fieldViewBuilder: (context, controller, focusNode, onEditingComplete) {
+                fieldViewBuilder:
+                    (context, controller, focusNode, onEditingComplete) {
                   _autocompleteController = controller;
-                  // Pre-fill when editing
-                  if (isEditing && controller.text.isEmpty && nameController.text.isNotEmpty) {
+                  if (isEditing &&
+                      controller.text.isEmpty &&
+                      nameController.text.isNotEmpty) {
                     controller.text = nameController.text;
                   }
                   return TextField(
@@ -266,7 +384,7 @@ class _AddIngredientScreenState extends State<AddIngredientScreen> {
               else if (_userIngredients.isEmpty)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Text('No saved ingredients yet. Add meals with ingredients first.'),
+                  child: Text('No saved ingredients yet.'),
                 )
               else
                 Container(
@@ -280,14 +398,14 @@ class _AddIngredientScreenState extends State<AddIngredientScreen> {
                     children: _userIngredients
                         .where((ing) =>
                             _myIngredientFilterController.text.isEmpty ||
-                            (ing['name'] as String)
-                                .toLowerCase()
-                                .contains(_myIngredientFilterController.text.toLowerCase()))
+                            (ing['name'] as String).toLowerCase().contains(
+                                _myIngredientFilterController.text
+                                    .toLowerCase()))
                         .map((ing) => ListTile(
                               dense: true,
                               title: Text(ing['name']),
                               subtitle: Text(
-                                  '${ing['unit']} · ${(ing['calories'] as num?)?.toStringAsFixed(0) ?? 0} kcal/serving'),
+                                  '${ing['unit']} · ${(ing['calories'] as num?)?.toStringAsFixed(0) ?? 0} cal'),
                               onTap: () => _selectUserIngredient(ing),
                             ))
                         .toList(),
@@ -301,39 +419,78 @@ class _AddIngredientScreenState extends State<AddIngredientScreen> {
                   child: TextField(
                     controller: quantityController,
                     decoration: const InputDecoration(labelText: 'Quantity'),
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: TextField(
-                    controller: unitController,
-                    decoration: const InputDecoration(labelText: 'Unit'),
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Unit',
+                      border: OutlineInputBorder(),
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _selectedUnit,
+                        isDense: true,
+                        items: unitToGram.keys
+                            .map((u) =>
+                                DropdownMenuItem(value: u, child: Text(u)))
+                            .toList(),
+                        onChanged: (val) {
+                          if (val == null) return;
+                          setState(() => _selectedUnit = val);
+                          scaleNutrition();
+                        },
+                      ),
+                    ),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 20),
-            TextField(
-              controller: caloriesController,
-              decoration: const InputDecoration(labelText: 'Calories'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            ),
-            TextField(
-              controller: proteinController,
-              decoration: const InputDecoration(labelText: 'Protein'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            ),
-            TextField(
-              controller: carbsController,
-              decoration: const InputDecoration(labelText: 'Carbs'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            ),
-            TextField(
-              controller: fatController,
-              decoration: const InputDecoration(labelText: 'Fat'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            ),
+            Row(children: [
+              Expanded(
+                child: TextField(
+                  controller: caloriesController,
+                  decoration: const InputDecoration(labelText: 'Calories'),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  controller: proteinController,
+                  decoration: const InputDecoration(labelText: 'Protein (g)'),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(
+                child: TextField(
+                  controller: carbsController,
+                  decoration: const InputDecoration(labelText: 'Carbs (g)'),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  controller: fatController,
+                  decoration: const InputDecoration(labelText: 'Fat (g)'),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                ),
+              ),
+            ]),
             const SizedBox(height: 30),
             SizedBox(
               width: double.infinity,

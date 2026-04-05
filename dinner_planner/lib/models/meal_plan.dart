@@ -8,6 +8,12 @@ class MealPlan {
   final String? mealName;
   final String? mealImageUrl;
 
+  // Per-serving nutrition (total ingredients / servings)
+  final double mealCalories;
+  final double mealProtein;
+  final double mealCarbs;
+  final double mealFat;
+
   MealPlan({
     this.id,
     required this.userId,
@@ -17,10 +23,26 @@ class MealPlan {
     this.mealId,
     this.mealName,
     this.mealImageUrl,
+    this.mealCalories = 0,
+    this.mealProtein = 0,
+    this.mealCarbs = 0,
+    this.mealFat = 0,
   });
 
   factory MealPlan.fromJson(Map<String, dynamic> json) {
     final mealData = json['meals'] as Map<String, dynamic>?;
+    final ingredients = (mealData?['ingredients'] as List?) ?? [];
+    final servings = ((mealData?['servings']) as int?) ?? 1;
+
+    double totalCal = 0, totalPro = 0, totalCarbs = 0, totalFat = 0;
+    for (final ing in ingredients) {
+      totalCal += (ing['calories'] as num?)?.toDouble() ?? 0;
+      totalPro += (ing['protein'] as num?)?.toDouble() ?? 0;
+      totalCarbs += (ing['carbs'] as num?)?.toDouble() ?? 0;
+      totalFat += (ing['fat'] as num?)?.toDouble() ?? 0;
+    }
+    final s = servings > 0 ? servings : 1;
+
     return MealPlan(
       id: json['id'],
       userId: json['user_id'],
@@ -30,6 +52,10 @@ class MealPlan {
       mealId: json['meal_id'],
       mealName: mealData?['name'],
       mealImageUrl: mealData?['image_url'],
+      mealCalories: totalCal / s,
+      mealProtein: totalPro / s,
+      mealCarbs: totalCarbs / s,
+      mealFat: totalFat / s,
     );
   }
 
