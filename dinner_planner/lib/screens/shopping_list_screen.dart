@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/meal_plan.dart';
+import '../models/pantry_item.dart';
 import '../models/shopping_item.dart';
 import '../models/store_info.dart';
 import '../services/supabase_service.dart';
@@ -45,6 +46,10 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
 
   // Checked-off items (keys of items the user has ticked while shopping)
   final Set<String> _checkedItems = {};
+
+  // Pantry-owned items (cross-referenced from My Groceries)
+  List<_OwnedMatch> _ownedItems = [];
+  bool _ownedExpanded = true;
 
   Timer? _saveTimer;
 
@@ -117,8 +122,44 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
         );
       }
     }
-    _items = aggregated.values.toList()
+    final all = aggregated.values.toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+    // Cross-reference with pantry — split into "need to buy" vs "owned"
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId != null) {
+      try {
+        final pantry = await _service.getPantryItems(userId);
+        final available =
+            pantry.where((p) => !p.isExpired && p.quantity > 0).toList();
+
+        final owned = <_OwnedMatch>[];
+        final needToBuy = <ShoppingItem>[];
+
+        for (final item in all) {
+          final sName = item.name.toLowerCase();
+          PantryItem? match;
+          for (final p in available) {
+            final pName = p.name.toLowerCase();
+            if (pName.contains(sName) || sName.contains(pName)) {
+              match = p;
+              break;
+            }
+          }
+          if (match != null) {
+            owned.add(_OwnedMatch(needed: item, inPantry: match));
+          } else {
+            needToBuy.add(item);
+          }
+        }
+        _items = needToBuy;
+        _ownedItems = owned;
+        return;
+      } catch (_) {
+        // Pantry lookup failed — show all items as normal
+      }
+    }
+    _items = all;
   }
 
   Future<void> _loadStorePreferences() async {
@@ -530,11 +571,11 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                 onPressed: _showAddItemDialog,
               ),
               if (_items.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.only(left: 8),
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
                   child: Text(
                     'No meals planned — add items manually',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                    style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
                   ),
                 ),
             ],
@@ -543,35 +584,109 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
 
         const Divider(height: 1),
 
-        // ── Ingredient list ─────────────────────────────────────────────────
+        // ── Ingredient list + Owned section ─────────────────────────────────
         Expanded(
-          child: _items.isEmpty
-              ? const Center(child: Text('No items yet. Tap "Add item" above.'))
-              : Builder(builder: (_) {
-                  // Checked items sort to the bottom
-                  final sorted = [
-                    ..._items.where((i) => !_checkedItems.contains(_itemKey(i))),
-                    ..._items.where((i) => _checkedItems.contains(_itemKey(i))),
-                  ];
-                  return ListView.separated(
-                    padding: const EdgeInsets.only(bottom: 100),
-                    itemCount: sorted.length,
-                    separatorBuilder: (_, __) =>
-                        const Divider(height: 1, indent: 16, endIndent: 16),
-                    itemBuilder: (_, i) => Dismissible(
-                      key: Key(_itemKey(sorted[i])),
-                      direction: DismissDirection.endToStart,
-                      background: Container(
-                        color: Colors.red.shade400,
-                        alignment: Alignment.centerRight,
-                        padding: const EdgeInsets.only(right: 20),
-                        child: const Icon(Icons.delete, color: Colors.white),
+          child: Builder(builder: (ctx) {
+            final cs = Theme.of(ctx).colorScheme;
+            final sorted = [
+              ..._items.where((i) => !_checkedItems.contains(_itemKey(i))),
+              ..._items.where((i) => _checkedItems.contains(_itemKey(i))),
+            ];
+
+            if (sorted.isEmpty && _ownedItems.isEmpty) {
+              return const Center(
+                  child: Text('No items yet. Tap "Add item" above.'));
+            }
+
+            return CustomScrollView(
+              slivers: [
+                // Shopping items
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (_, i) {
+                      if (i.isOdd) {
+                        return const Divider(
+                            height: 1, indent: 16, endIndent: 16);
+                      }
+                      final item = sorted[i ~/ 2];
+                      return Dismissible(
+                        key: Key(_itemKey(item)),
+                        direction: DismissDirection.endToStart,
+                        background: Container(
+                          color: Colors.red.shade400,
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 20),
+                          child:
+                              const Icon(Icons.delete, color: Colors.white),
+                        ),
+                        onDismissed: (_) => _deleteItem(item),
+                        child: _buildItemTile(item),
+                      );
+                    },
+                    childCount: sorted.isEmpty
+                        ? 0
+                        : sorted.length * 2 - 1,
+                  ),
+                ),
+
+                // Owned section header
+                if (_ownedItems.isNotEmpty)
+                  SliverToBoxAdapter(
+                    child: InkWell(
+                      onTap: () =>
+                          setState(() => _ownedExpanded = !_ownedExpanded),
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                        decoration: BoxDecoration(
+                          color: cs.primaryContainer.withValues(alpha: 0.35),
+                          border: Border(
+                            top: BorderSide(
+                                color: cs.outlineVariant, width: 0.5),
+                            bottom: BorderSide(
+                                color: cs.outlineVariant, width: 0.5),
+                          ),
+                        ),
+                        child: Row(children: [
+                          Icon(Icons.kitchen_rounded,
+                              size: 16,
+                              color: cs.primary.withValues(alpha: 0.8)),
+                          const SizedBox(width: 8),
+                          Text(
+                            'OWNED — IN MY GROCERIES (${_ownedItems.length})',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.6,
+                              color: cs.primary,
+                            ),
+                          ),
+                          const Spacer(),
+                          Icon(
+                            _ownedExpanded
+                                ? Icons.expand_less
+                                : Icons.expand_more,
+                            size: 18,
+                            color: cs.primary.withValues(alpha: 0.7),
+                          ),
+                        ]),
                       ),
-                      onDismissed: (_) => _deleteItem(sorted[i]),
-                      child: _buildItemTile(sorted[i]),
                     ),
-                  );
-                }),
+                  ),
+
+                // Owned items
+                if (_ownedItems.isNotEmpty && _ownedExpanded)
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (_, i) => _buildOwnedTile(_ownedItems[i], cs),
+                      childCount: _ownedItems.length,
+                    ),
+                  ),
+
+                const SliverPadding(
+                    padding: EdgeInsets.only(bottom: 100)),
+              ],
+            );
+          }),
         ),
       ],
     );
@@ -600,7 +715,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                 Text(
                   '$_assignedCount of ${_items.length} items assigned'
                   '${hasPrice ? '  ·  est. \$${total.toStringAsFixed(2)}' : ''}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
                 ),
               ],
             ),
@@ -677,9 +792,9 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                         children: [
                           Text('$qty ${item.unit}',
                               style: TextStyle(
-                                  fontSize: 13, color: Colors.grey[600])),
+                                  fontSize: 13, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6))),
                           const SizedBox(width: 4),
-                          Icon(Icons.edit, size: 11, color: Colors.grey[400]),
+                          Icon(Icons.edit, size: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
                         ],
                       ),
                     ),
@@ -694,13 +809,13 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                       horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
                     color: price != null
-                        ? Colors.green.shade50
-                        : Colors.grey.shade100,
+                        ? Theme.of(context).colorScheme.primaryContainer
+                        : Theme.of(context).colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                       color: price != null
-                          ? Colors.green.shade300
-                          : Colors.grey.shade300,
+                          ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.4)
+                          : Theme.of(context).colorScheme.outlineVariant,
                     ),
                   ),
                   child: Row(
@@ -710,8 +825,8 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                         price != null ? Icons.attach_money : Icons.add,
                         size: 14,
                         color: price != null
-                            ? Colors.green.shade700
-                            : Colors.grey[600],
+                            ? Theme.of(context).colorScheme.onPrimaryContainer
+                            : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                       ),
                       Text(
                         price != null
@@ -720,8 +835,8 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                         style: TextStyle(
                           fontSize: 12,
                           color: price != null
-                              ? Colors.green.shade700
-                              : Colors.grey[600],
+                              ? Theme.of(context).colorScheme.onPrimaryContainer
+                              : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                         ),
                       ),
                     ],
@@ -771,6 +886,61 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
     );
   }
 
+  Widget _buildOwnedTile(_OwnedMatch match, ColorScheme cs) {
+    final needed = match.needed;
+    final pantry = match.inPantry;
+
+    final neededQty = needed.totalQuantity % 1 == 0
+        ? needed.totalQuantity.toInt().toString()
+        : needed.totalQuantity.toStringAsFixed(1);
+    final haveQty = pantry.quantity % 1 == 0
+        ? pantry.quantity.toInt().toString()
+        : pantry.quantity.toStringAsFixed(1);
+    final displayName =
+        needed.name[0].toUpperCase() + needed.name.substring(1);
+
+    return Opacity(
+      opacity: 0.75,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(children: [
+          Icon(Icons.check_circle_outline,
+              size: 20, color: cs.primary.withValues(alpha: 0.7)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(displayName,
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w500)),
+                Text(
+                  'Need: $neededQty ${needed.unit}  ·  Have: $haveQty ${pantry.unit}',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: cs.onSurface.withValues(alpha: 0.55)),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: cs.primaryContainer.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text('In stock',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: cs.primary)),
+          ),
+        ]),
+      ),
+    );
+  }
+
   Widget _buildStoreChip(
       ShoppingItem item, String storeName, String? assignedStore) {
     final store = storeByName(storeName);
@@ -789,10 +959,10 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
         decoration: BoxDecoration(
           color: isAssigned
               ? color.withValues(alpha: 0.15)
-              : Colors.grey.shade100,
+              : Theme.of(context).colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: isAssigned ? color : Colors.grey.shade300,
+            color: isAssigned ? color : Theme.of(context).colorScheme.outlineVariant,
             width: isAssigned ? 1.5 : 1,
           ),
         ),
@@ -806,14 +976,14 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
               ),
             Icon(store?.icon ?? Icons.store,
                 size: 13,
-                color: isAssigned ? color : Colors.grey[600]),
+                color: isAssigned ? color : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
             const SizedBox(width: 4),
             Text(
               storeName,
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: isAssigned ? FontWeight.w600 : FontWeight.normal,
-                color: isAssigned ? color : Colors.grey[700],
+                color: isAssigned ? color : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
               ),
             ),
           ],
@@ -840,14 +1010,16 @@ class _InfoBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-      color: Colors.blue.shade50,
+      color: Theme.of(context).colorScheme.secondaryContainer,
       child: Row(
         children: [
-          const Icon(Icons.info_outline, size: 18, color: Colors.blue),
+          Icon(Icons.info_outline, size: 18,
+              color: Theme.of(context).colorScheme.onSecondaryContainer),
           const SizedBox(width: 10),
           Expanded(
             child: Text(message,
-                style: const TextStyle(fontSize: 12, color: Colors.black87)),
+                style: TextStyle(fontSize: 12,
+                    color: Theme.of(context).colorScheme.onSecondaryContainer)),
           ),
           TextButton(
             onPressed: onAction,
@@ -857,4 +1029,10 @@ class _InfoBanner extends StatelessWidget {
       ),
     );
   }
+}
+
+class _OwnedMatch {
+  final ShoppingItem needed;
+  final PantryItem inPantry;
+  const _OwnedMatch({required this.needed, required this.inPantry});
 }

@@ -82,7 +82,7 @@ class _StorePreferencesScreenState extends State<StorePreferencesScreen> {
                     'Select the stores you want to shop at. Each ingredient '
                     'on your shopping list will show a chip for each selected '
                     'store so you can assign where to buy it.',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 13),
                   ),
                 ),
                 const Divider(),

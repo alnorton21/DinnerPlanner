@@ -7,7 +7,8 @@ import 'meal_detail_screen.dart';
 import 'shopping_list_screen.dart';
 
 class MealPlannerScreen extends StatefulWidget {
-  const MealPlannerScreen({super.key});
+  final DateTime? initialWeekStart;
+  const MealPlannerScreen({super.key, this.initialWeekStart});
 
   @override
   State<MealPlannerScreen> createState() => _MealPlannerScreenState();
@@ -37,7 +38,7 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
   @override
   void initState() {
     super.initState();
-    _currentWeekStart = _getWeekStart(DateTime.now());
+    _currentWeekStart = widget.initialWeekStart ?? _getWeekStart(DateTime.now());
     _loadGoals();
     _loadWeek();
   }
@@ -259,12 +260,12 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
                   if (daysWithData > 0)
                     Text(
                       '${summary['avgCal'].toStringAsFixed(0)} cal/day avg',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
                     ),
                   const SizedBox(width: 4),
                   Icon(
                     _summaryExpanded ? Icons.expand_less : Icons.expand_more,
-                    color: Colors.grey[600],
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                   ),
                 ],
               ),
@@ -287,7 +288,7 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
                             padding: const EdgeInsets.symmetric(vertical: 8),
                             child: Text(
                               'Add meals to see your weekly summary',
-                              style: TextStyle(color: Colors.grey[500], fontSize: 13),
+                              style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5), fontSize: 13),
                             ),
                           )
                         else ...[
@@ -311,7 +312,7 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
                                       height: barH.clamp(2.0, barMaxHeight * 1.5),
                                       margin: const EdgeInsets.symmetric(horizontal: 3),
                                       decoration: BoxDecoration(
-                                        color: cal > 0 ? color : Colors.grey[200],
+                                        color: cal > 0 ? color : Theme.of(context).colorScheme.surfaceContainerHighest,
                                         borderRadius: BorderRadius.circular(3),
                                       ),
                                     ),
@@ -319,7 +320,7 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
                                     Text(
                                       dayAbbr[i],
                                       style: TextStyle(
-                                          fontSize: 11, color: Colors.grey[600]),
+                                          fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
                                     ),
                                     if (cal > 0)
                                       Text(
@@ -335,7 +336,7 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
                             padding: const EdgeInsets.only(top: 4, bottom: 10),
                             child: Text(
                               'Target: ${_calTarget.toStringAsFixed(0)} cal/day',
-                              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
                               textAlign: TextAlign.center,
                             ),
                           ),
@@ -370,18 +371,32 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_weekLabel),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.chevron_left),
+              tooltip: 'Previous week',
+              onPressed: () => _navigateWeek(-1),
+              visualDensity: VisualDensity.compact,
+            ),
+            Flexible(
+              child: Text(
+                _weekLabel,
+                style: const TextStyle(fontSize: 15),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.chevron_right),
+              tooltip: 'Next week',
+              onPressed: () => _navigateWeek(1),
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        ),
+        centerTitle: true,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.chevron_left),
-            tooltip: 'Previous week',
-            onPressed: () => _navigateWeek(-1),
-          ),
-          IconButton(
-            icon: const Icon(Icons.chevron_right),
-            tooltip: 'Next week',
-            onPressed: () => _navigateWeek(1),
-          ),
           IconButton(
             icon: const Icon(Icons.shopping_cart),
             tooltip: 'Shopping List',
@@ -447,7 +462,7 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
                       style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: Colors.grey[700]),
+                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7)),
                     ),
                 ],
               ),
@@ -536,7 +551,7 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
                 child: Text(
                   'No meals added',
                   style: TextStyle(
-                    color: Colors.grey.shade500,
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
                     fontStyle: FontStyle.italic,
                     fontSize: 13,
                   ),
@@ -585,7 +600,7 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
                                 Text(
                                   '${plan.mealCalories.toStringAsFixed(0)} cal / serving',
                                   style: TextStyle(
-                                      fontSize: 11, color: Colors.grey[600]),
+                                      fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
                                 ),
                             ],
                           ),
@@ -638,7 +653,7 @@ class _MacroBar extends StatelessWidget {
           width: 44,
           child: Text(
             label,
-            style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7)),
           ),
         ),
         Expanded(
@@ -657,7 +672,7 @@ class _MacroBar extends StatelessWidget {
           width: 72,
           child: Text(
             '$valueText / $targetText $unit',
-            style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+            style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
             textAlign: TextAlign.right,
           ),
         ),

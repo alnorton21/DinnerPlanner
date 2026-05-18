@@ -115,8 +115,9 @@ class _MealDetailScreenState extends State<MealDetailScreen> {
               background: meal!['image_url'] != null
                   ? Image.network(meal!['image_url'], fit: BoxFit.cover)
                   : Container(
-                      color: Colors.grey[300],
-                      child: const Icon(Icons.restaurant, size: 120),
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      child: Icon(Icons.restaurant, size: 120,
+                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
                     ),
             ),
           ),
@@ -137,7 +138,7 @@ class _MealDetailScreenState extends State<MealDetailScreen> {
                         servings > 1
                             ? 'per serving ($servings servings)'
                             : 'per serving',
-                        style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                        style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
                       ),
                     ],
                   ),
@@ -156,6 +157,29 @@ class _MealDetailScreenState extends State<MealDetailScreen> {
                       ),
                     ),
                   ),
+                  // Categories
+                  Builder(builder: (_) {
+                    final cats = List<String>.from(
+                        meal!['categories'] as List? ?? []);
+                    if (cats.isEmpty) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: cats
+                            .map((c) => Chip(
+                                  label: Text(c,
+                                      style: const TextStyle(fontSize: 12)),
+                                  visualDensity: VisualDensity.compact,
+                                  padding: EdgeInsets.zero,
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ))
+                            .toList(),
+                      ),
+                    );
+                  }),
                   const SizedBox(height: 25),
                   const Text('Ingredients',
                       style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
@@ -183,7 +207,7 @@ class _MealDetailScreenState extends State<MealDetailScreen> {
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: Colors.grey[100],
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(

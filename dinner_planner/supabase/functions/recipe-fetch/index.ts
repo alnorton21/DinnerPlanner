@@ -12,14 +12,9 @@ const FETCH_HEADERS = {
     'AppleWebKit/537.36 (KHTML, like Gecko) ' +
     'Chrome/124.0.0.0 Safari/537.36',
   'Accept':
-    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'en-US,en;q=0.9',
-  'Accept-Encoding': 'gzip, deflate, br',
-  'Connection': 'keep-alive',
   'Upgrade-Insecure-Requests': '1',
-  'Sec-Fetch-Dest': 'document',
-  'Sec-Fetch-Mode': 'navigate',
-  'Sec-Fetch-Site': 'none',
   'Cache-Control': 'max-age=0',
 }
 
@@ -78,6 +73,7 @@ serve(async (req) => {
     }
 
     const html = await response.text()
+    console.log(`Fetched ${parsed.toString()} — status ${response.status}, html length ${html.length}`)
     return new Response(
       JSON.stringify({ html }),
       { status: 200, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }

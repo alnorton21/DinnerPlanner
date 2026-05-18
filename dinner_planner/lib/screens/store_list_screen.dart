@@ -223,7 +223,7 @@ class _StoreGroupHeader extends StatelessWidget {
                 Text(
                   '$itemCount item${itemCount == 1 ? '' : 's'}'
                   '${total != null ? '  ·  est. \$${total!.toStringAsFixed(2)}' : ''}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
                 ),
               ],
             ),
@@ -259,7 +259,7 @@ class _ItemRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       child: Row(
         children: [
-          const Icon(Icons.circle, size: 6, color: Colors.grey),
+          Icon(Icons.circle, size: 6, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
           const SizedBox(width: 10),
           Expanded(
             child: Text('$name  $qty ${item.unit}',

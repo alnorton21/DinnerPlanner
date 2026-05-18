@@ -15,6 +15,7 @@ class EditMealScreen extends StatefulWidget {
 
 class _EditMealScreenState extends State<EditMealScreen> {
   final supabase = Supabase.instance.client;
+  late final TextEditingController nameController;
   late final TextEditingController instructionsController;
   late final TextEditingController servingsController;
 
@@ -26,6 +27,8 @@ class _EditMealScreenState extends State<EditMealScreen> {
   @override
   void initState() {
     super.initState();
+    nameController =
+        TextEditingController(text: widget.meal['name'] ?? '');
     instructionsController =
         TextEditingController(text: widget.meal['instructions'] ?? '');
     servingsController =
@@ -35,6 +38,7 @@ class _EditMealScreenState extends State<EditMealScreen> {
 
   @override
   void dispose() {
+    nameController.dispose();
     instructionsController.dispose();
     servingsController.dispose();
     super.dispose();
@@ -77,6 +81,7 @@ class _EditMealScreenState extends State<EditMealScreen> {
         imageUrl = supabase.storage.from('meal-images').getPublicUrl(path);
       }
       await supabase.from('meals').update({
+        'name': nameController.text.trim(),
         'instructions': instructionsController.text.trim(),
         'servings': int.tryParse(servingsController.text.trim()) ?? 1,
         'image_url': imageUrl,
@@ -132,6 +137,21 @@ class _EditMealScreenState extends State<EditMealScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ── Meal Name ─────────────────────────────────────────
+            const Text('Meal Name',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'Meal name',
+              ),
+              textCapitalization: TextCapitalization.words,
+            ),
+
+            const SizedBox(height: 20),
+
             // ── Image ──────────────────────────────────────────────
             const Text('Image',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
@@ -148,21 +168,26 @@ class _EditMealScreenState extends State<EditMealScreen> {
                             height: 200,
                             width: double.infinity,
                             fit: BoxFit.cover)
-                        : Container(
-                            height: 200,
-                            width: double.infinity,
-                            color: Colors.grey[200],
-                            child: const Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.add_photo_alternate,
-                                    size: 48, color: Colors.grey),
-                                SizedBox(height: 8),
-                                Text('Tap to add image',
-                                    style: TextStyle(color: Colors.grey)),
-                              ],
-                            ),
-                          ),
+                        : Builder(builder: (ctx) {
+                            final cs = Theme.of(ctx).colorScheme;
+                            return Container(
+                              height: 200,
+                              width: double.infinity,
+                              color: cs.surfaceContainerHighest,
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.add_photo_alternate,
+                                      size: 48,
+                                      color: cs.onSurface.withValues(alpha: 0.5)),
+                                  const SizedBox(height: 8),
+                                  Text('Tap to add image',
+                                      style: TextStyle(
+                                          color: cs.onSurface.withValues(alpha: 0.5))),
+                                ],
+                              ),
+                            );
+                          }),
               ),
             ),
             if (newImageFile != null || currentImageUrl != null) ...[
@@ -221,7 +246,7 @@ class _EditMealScreenState extends State<EditMealScreen> {
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Text('No ingredients yet. Tap + to add.',
-                    style: TextStyle(color: Colors.grey[600])),
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6))),
               )
             else
               Column(

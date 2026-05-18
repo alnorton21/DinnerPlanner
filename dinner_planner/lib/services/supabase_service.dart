@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/meal_plan.dart';
+import '../models/pantry_item.dart';
 
 class SupabaseService {
   static final client = Supabase.instance.client;
@@ -66,6 +67,39 @@ class SupabaseService {
       return null;
     }
   }
+
+  // ── Pantry ────────────────────────────────────────────────────────────────
+
+  Future<List<PantryItem>> getPantryItems(String userId) async {
+    final rows = await client
+        .from('pantry_items')
+        .select()
+        .eq('user_id', userId)
+        .order('expiration_date', ascending: true, nullsFirst: false)
+        .order('name', ascending: true);
+    return (rows as List).map((r) => PantryItem.fromJson(r)).toList();
+  }
+
+  Future<PantryItem> addPantryItem(
+      String userId, Map<String, dynamic> data) async {
+    final row = await client
+        .from('pantry_items')
+        .insert({'user_id': userId, ...data})
+        .select()
+        .single();
+    return PantryItem.fromJson(row);
+  }
+
+  Future<void> updatePantryItem(
+      int id, Map<String, dynamic> data) async {
+    await client.from('pantry_items').update(data).eq('id', id);
+  }
+
+  Future<void> deletePantryItem(int id) async {
+    await client.from('pantry_items').delete().eq('id', id);
+  }
+
+  // ── Shopping state ────────────────────────────────────────────────────────
 
   Future<void> saveShoppingState(
     String userId,

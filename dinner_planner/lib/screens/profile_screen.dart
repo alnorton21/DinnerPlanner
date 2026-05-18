@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../main.dart' show themeNotifier;
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -24,6 +25,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late TextEditingController _carbCtrl;
   late TextEditingController _fatCtrl;
 
+  bool _isDarkMode = false;
   bool _loading = true;
   bool _saving = false;
 
@@ -62,6 +64,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _proteinGoal = (data['protein_goal'] as num?)?.toDouble() ?? 150;
         _carbGoal    = (data['carb_goal']    as num?)?.toDouble() ?? 250;
         _fatGoal     = (data['fat_goal']     as num?)?.toDouble() ?? 65;
+        _isDarkMode  = (data['dark_mode']    as bool?) ?? false;
       });
       _calCtrl.text  = _calorieGoal.round().toString();
       _proCtrl.text  = _proteinGoal.round().toString();
@@ -83,6 +86,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         'protein_goal':  _proteinGoal.roundToDouble(),
         'carb_goal':     _carbGoal.roundToDouble(),
         'fat_goal':      _fatGoal.roundToDouble(),
+        'dark_mode':     _isDarkMode,
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -148,6 +152,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     controller: TextEditingController(text: email),
                   ),
 
+                  const SizedBox(height: 20),
+
+                  // ── Appearance ───────────────────────────────────────────
+                  _sectionHeader('Appearance', Icons.palette_outlined),
+                  const SizedBox(height: 8),
+                  Card(
+                    margin: EdgeInsets.zero,
+                    child: SwitchListTile(
+                      title: const Text('Dark Mode'),
+                      subtitle: const Text('Switch between light and dark theme'),
+                      secondary: Icon(
+                        _isDarkMode ? Icons.dark_mode : Icons.light_mode,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      value: _isDarkMode,
+                      onChanged: (val) {
+                        setState(() => _isDarkMode = val);
+                        themeNotifier.value =
+                            val ? ThemeMode.dark : ThemeMode.light;
+                      },
+                    ),
+                  ),
+
                   const SizedBox(height: 28),
 
                   // ── Nutrition goals ──────────────────────────────────────
@@ -155,7 +182,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: 4),
                   Text(
                     'These are used as targets in your weekly meal planner.',
-                    style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                    style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
                   ),
                   const SizedBox(height: 20),
 
@@ -329,10 +356,10 @@ class _GoalSlider extends StatelessWidget {
             children: [
               Text('${min.toInt()} $unit',
                   style: TextStyle(
-                      fontSize: 11, color: Colors.grey[500])),
+                      fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5))),
               Text('${max.toInt()} $unit',
                   style: TextStyle(
-                      fontSize: 11, color: Colors.grey[500])),
+                      fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5))),
             ],
           ),
         ),

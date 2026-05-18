@@ -38,6 +38,8 @@ dependencies:
   flutter_dotenv: ^5.0.2
   url_launcher: ^6.3.0
   mobile_scanner: ^5.2.0
+  sqflite: ^2.3.3
+  path: ^1.9.0
 
 
   # The following adds the Cupertino Icons font to your application.

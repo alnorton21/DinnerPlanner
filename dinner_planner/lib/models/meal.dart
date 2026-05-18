@@ -6,6 +6,7 @@ class Meal {
   final String? imageUrl;
   final int servings;
   final String? sourceUrl;
+  final List<String> categories;
 
   Meal({
     this.id,
@@ -14,16 +15,18 @@ class Meal {
     this.imageUrl,
     this.servings = 1,
     this.sourceUrl,
+    this.categories = const [],
   });
 
   factory Meal.fromJson(Map<String, dynamic> json) {
     return Meal(
       id: json['id'],
       name: json['name'],
-      instructions: json['instructions'],
+      instructions: json['instructions'] ?? '',
       imageUrl: json['image_url'],
       servings: (json['servings'] as int?) ?? 1,
       sourceUrl: json['source_url'] as String?,
+      categories: List<String>.from(json['categories'] ?? []),
     );
   }
 
@@ -34,6 +37,7 @@ class Meal {
       'image_url': imageUrl,
       'servings': servings,
       if (sourceUrl != null) 'source_url': sourceUrl,
+      'categories': categories,
     };
   }
 }
