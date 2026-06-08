@@ -25,10 +25,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       .select('dark_mode')
       .eq('user_id', session.user.id)
       .maybeSingle()
-      .then(({ data }) => {
-        if (!cancelled) setIsDarkState(Boolean(data?.dark_mode ?? false))
-      })
-      .catch(() => {})
+      .then(
+        ({ data }) => {
+          if (!cancelled) setIsDarkState(Boolean(data?.dark_mode ?? false))
+        },
+        () => {},
+      )
     return () => {
       cancelled = true
     }

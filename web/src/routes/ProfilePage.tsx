@@ -22,11 +22,9 @@ export function ProfilePage() {
 
   useEffect(() => {
     let cancelled = false
-    supabase
-      .from('user_profiles')
-      .select()
-      .eq('user_id', userId)
-      .maybeSingle()
+    Promise.resolve(
+      supabase.from('user_profiles').select().eq('user_id', userId).maybeSingle(),
+    )
       .then(({ data }) => {
         if (cancelled || !data) return
         setDisplayName(data.display_name ?? '')
