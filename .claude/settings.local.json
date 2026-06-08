@@ -5,7 +5,11 @@
       "Bash(Get-ChildItem -Recurse -Directory)",
       "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(Sort-Object)",
-      "Bash(flutter pub *)"
+      "Bash(flutter pub *)",
+      "Bash(npm create *)",
+      "Bash(npm install *)",
+      "Bash(sed 's/=.*/=<redacted>/' .env)",
+      "Bash(cat ../.gitignore)"
     ]
   }
 }
